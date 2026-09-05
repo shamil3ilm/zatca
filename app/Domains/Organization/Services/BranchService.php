@@ -192,5 +192,4 @@ class BranchService
             ->with('org')
             ->get();
     }
-
 }
