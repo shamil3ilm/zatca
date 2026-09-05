@@ -5,8 +5,9 @@ Includes Step 6 (chain integrity under concurrency) and Step 7 (failure paths).
 | ID | Risk | Severity | Evidence | Fix | Effort |
 |---|---|---|---|---|---|
 | ~~R-1~~ | ~~Two issuances can select the same PIH~~ **FIXED** `0bcd7bd` | — | Was proven by `ChainForkTest`; counter now allocated at issuance under the org-row lock that reads the predecessor. Restoring the old hook fails 3 of 5 tests | Done | — |
-| R-2 | The submitted document can differ from the archived one | **CRITICAL** | `Submitter.php` re-signs in `submit()`; `ProcessFatooraSubmission` builds a third document of its own | Submit the stored `signed_xml` | 3–6h |
-| R-17 | **Three separate paths build the document** — `Submitter::generate()`, `Submitter::submit()`, `ProcessFatooraSubmission::handle()` | **HIGH** | Found while fixing R-1: the queue path submitted ICV 0 and the genesis PIH because it never issued. Now guarded, but three builders remain | Collapse to one | 6–10h |
+| ~~R-2~~ | ~~Submitted document differs from the archived one~~ **FIXED** `0756b03` | — | Both paths now transmit `signed_xml`/`hash` as issued. Restoring the re-signing fails `SubmittedDocumentTest` | Done | — |
+| ~~R-17~~ | ~~Three paths build the document~~ **FIXED** `0756b03` | — | `generate()` is now the only producer; `submit()` and the queue job transmit what it archived. The job no longer depends on `DocumentBuilder` or `CredentialStore` | Done | — |
+| R-18 | `validate()` still builds its own document | **LOW** | `Submitter::validate()` calls `generateComplianceData()` for the pre-submission compliance check | Acceptable — it checks a candidate, does not issue | — |
 | R-3 | One encryption key covers every tenant's signing key | **HIGH** | `CredentialStore.php:57-72`, `config/fatoora.php:90` | Per-tenant DEKs | 16–24h |
 | R-4 | No reconciliation — a stalled B2C queue is invisible | **HIGH** | absence; `VerifyHashChain.php:124` | Reconciliation command + alert | 8–12h |
 | R-5 | Schema validation is test-time only, opt-in, and undocumented | **MEDIUM** | `ZatcaSdk.php:31-50`; `ZATCA_SDK_PATH` absent from `.env.example`/CI/docs; `InvoiceValidator.php:518-531` has 0 callers | Document + wire the SDK; later add a runtime check | 2–3h |
