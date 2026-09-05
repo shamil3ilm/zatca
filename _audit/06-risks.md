@@ -1,176 +1,358 @@
-# 06 — Risk Register
+# 06 — Risks
 
-Assessed against `main`.
+Includes Step 6 (chain integrity under concurrency) and Step 7 (failure paths).
 
 | ID | Risk | Severity | Evidence | Fix | Effort |
 |---|---|---|---|---|---|
-| **R-1** | Conformance passes but only when run by hand | 🟠 HIGH | `ZatcaSdk.php:34-47` skips without `ZATCA_SDK_PATH`; CI has no Java. A regression in document generation would not fail the build — the same exposure that let `ProfileID` stay wrong. | Cache the SDK as a CI artifact, use a self-hosted runner, or make conformance a documented pre-release gate. | 2–4 h |
-| **R-2** | One encryption secret covers every tenant; no KMS | 🟠 HIGH | `CredentialStore::cipher()` `:60-76`. The docblock `:29-31` names this as the open half of a prior finding. | Per-tenant data key wrapped by a KMS. `cipher()` is the only place that changes — the class was built for this. | 8–16 h |
-| **R-3** | **Four unresolved ZATCA spec questions.** Nothing in the codebase can settle them. | 🔴 CRITICAL | See table below | Read the spec / ask ZATCA. Do **not** guess. | 4–8 h research |
-| **R-4** | B2B clearance is treated as non-blocking | 🟠 HIGH | `PipelineService.php:30-32` "once an invoice is issued it stays issued"; `:143-189` catches all; issuance at `Submitter.php:80-86` precedes submission. | Split the rule by document type — see "Failure paths" below. | 6–10 h |
-| **R-5** | The submitted signature ≠ the archived signature | 🟠 HIGH | `generateComplianceData()` called twice per invoice: `Submitter.php:71` (issuance) and `:159` (submission). ECDSA `k` is random, so the two signatures differ over the same document. | Generate once, persist, re-read at submission. Or accept it and archive only `cleared_xml`. | 3–5 h |
-| **R-6** | Two PIH sources of truth, one weakly constrained | 🟡 MEDIUM | Accessor `Invoice.php:364-372` derives from `invoices`; `hash_chain_state`/`_history` (`0160`) store it. `hash_chain_history (org_id, icv)` is a **non-unique index** (`0160:37`) while `invoices` has a unique constraint on the same pair. | Unique constraint on `hash_chain_history`; a reconciliation assertion in `fatoora:verify-hash-chain` that A == B. | 2–4 h |
-| **R-7** | Silent fallback to the **wrong EC curve** | 🟠 HIGH | `FatooraGenerateCsr.php:307-309` and `:490-491`: if `secp256k1` is unavailable, retries with `prime256v1` behind a `warn()`. ZATCA requires secp256k1. | Make it fatal. A wrong-curve key onboards and then fails cryptographically, far from the cause. | 30 min |
-| **R-8** | No reconciliation: issued vs cleared vs reported | 🟡 MEDIUM | Nothing found; `VatPeriodTracker` (319 L) is the natural host and does not do it. Data is all present. | Scheduled command: issued invoices with no terminal submission state, older than N hours → report/alert. | 4–6 h |
-| **R-9** | No **push** alert when submissions fail platform-wide | 🟡 MEDIUM | `MetricsController.php:221-222` exposes `queue_failed_jobs_total` (pull-only; no Prometheus configured in repo). Tenant webhooks fire; nothing pages you. Contrast `CheckCertificateExpiry` `:171-188`, which pushes on a threshold ladder. | Mirror the certificate-alert pattern for submission failure rate. | 3–5 h |
-| **R-10** | No retention policy | 🟡 MEDIUM | No `retention` config; not stated in `docs/`. ZATCA/GAZT require multi-year retention (commonly cited as 6 years for VAT — **unverified**, see R-3). | Confirm the period, then document and enforce it. Nothing currently deletes invoices, so this is a policy gap, not active data loss. | 2–3 h + research |
-| **R-11** | ~~Unpushed work~~ **CLOSED** | ⚪ CLOSED | All three repositories clean, on `main`, pushed and verified by `ls-remote`. | — | done |
-| **R-12** | ~~ERP uncommitted refactor~~ **CLOSED** | ⚪ CLOSED | The CQRS-removal refactor is committed and pushed; 2121 tests pass. CI added, so the suite now runs on every push rather than on request. | — | done |
-| **R-13** | Default `php` on this machine silently no-ops the test suite | 🟡 MEDIUM | `php -v` = 8.2.28; `composer.json` requires `^8.4`; `php artisan test` dies in `platform_check.php` **with exit code 0**. | Use the 8.4.12 binary, or make it the Laragon default. CI is already correct (`ci.yml` pins 8.4). | 15 min |
-| **R-14** | `invoice_number` not unique per tenant | 🟡 MEDIUM | `0080:62` — non-unique index only. Enforced in app code by `DuplicateDetector`. | Unique `(org_id, invoice_number)` — see [05-data-model.md](05-data-model.md). | 1 h |
-| **R-15** | Buyer-VAT lookup is a full table scan | 🟢 LOW | `invoices.buyer_vat_number` unindexed (`0080:28`). Gap item 35 asks for retrieval by VAT number. | Add index. | 30 min |
-| **R-16** | `invoices.icv` nullable; `status`/`type` are varchar not enum | 🟢 LOW | `0080:19-20,57` vs `invoice_submissions.state` enum (`0140:50`). | Tighten **after** the sandbox run, when the shape is settled. | 2 h |
-| **R-17** | `*.bak` not gitignored | 🟢 LOW | `.claude/settings.json.bak` untracked and unignored. `.gitignore` covers `.env.*` because a `.env.bak` nearly leaked a live `APP_KEY` — the same class of file elsewhere is uncovered. | Add `*.bak`. | 2 min |
-| **R-18** | No `DebitNoteTest` | 🟢 LOW | `CreditNoteTest.php` exists; no debit-note equivalent. Both are in the six-type suite. | Mirror the credit-note test. | 1–2 h |
-| **R-19** | UAE transport assumes an endpoint that does not exist | 🔴 CRITICAL | `FTA/Services/FtaService.php:123-127` — bearer-token REST `POST {base}/invoices`. The UAE mandate is a five-corner DCTCE model over Peppol; invoices reach the FTA through an **Accredited Service Provider**, not a direct API. | Decide: seek ASP accreditation, or integrate with an accredited provider's access point (AS4/Peppol, not REST). Settle before building further on this path. | decision first |
-| **R-20** | Qatar has no published specification | 🟡 MEDIUM | GTA draft law approved May 2026; still needs Shura Council, Amir's assent and Gazette. No technical specification, no timeline. | Do not build. Revisit when the GTA publishes. | — |
-| **R-21** | `ComplianceRouter` is bound but never used | 🟠 HIGH | Bound in `ComplianceServiceProvider`; consumers are its own test only. `Pipeline/Services/PipelineService.php:7-9` imports `Fatoora\...` directly and catches `FatooraException`. The multi-jurisdiction design exists and is not on the request path. | Route `PipelineService` through the router; expose the FTA path on the partner API. Blocked behind R-19. | 6–10 h |
+| ~~R-1~~ | ~~Two issuances can select the same PIH~~ **FIXED** `0bcd7bd` | — | Was proven by `ChainForkTest`; counter now allocated at issuance under the org-row lock that reads the predecessor. Restoring the old hook fails 3 of 5 tests | Done | — |
+| R-2 | The submitted document can differ from the archived one | **CRITICAL** | `Submitter.php` re-signs in `submit()`; `ProcessFatooraSubmission` builds a third document of its own | Submit the stored `signed_xml` | 3–6h |
+| R-17 | **Three separate paths build the document** — `Submitter::generate()`, `Submitter::submit()`, `ProcessFatooraSubmission::handle()` | **HIGH** | Found while fixing R-1: the queue path submitted ICV 0 and the genesis PIH because it never issued. Now guarded, but three builders remain | Collapse to one | 6–10h |
+| R-3 | One encryption key covers every tenant's signing key | **HIGH** | `CredentialStore.php:57-72`, `config/fatoora.php:90` | Per-tenant DEKs | 16–24h |
+| R-4 | No reconciliation — a stalled B2C queue is invisible | **HIGH** | absence; `VerifyHashChain.php:124` | Reconciliation command + alert | 8–12h |
+| R-5 | Schema validation is test-time only, opt-in, and undocumented | **MEDIUM** | `ZatcaSdk.php:31-50`; `ZATCA_SDK_PATH` absent from `.env.example`/CI/docs; `InvoiceValidator.php:518-531` has 0 callers | Document + wire the SDK; later add a runtime check | 2–3h |
+| R-6 | Offline queue detects chain advance and does nothing | **HIGH** | `OfflineQueue.php:421-430` | Act on the check | 6–10h |
+| R-7 | Operator is never alerted to submission failure | **MEDIUM** | `ProcessFatooraSubmission.php:432-436` | Operator channel | 3–4h |
+| R-8 | 402 uncommitted migration deletions in erp-backend | **MEDIUM** | `git status` | Commit to a branch | 15min |
+| R-9 | Suite cannot run on the default PHP | **MEDIUM** | php 8.2.28 vs `composer.json:11` | Fix PATH / document | 15min |
+| R-10 | Seller VAT nullable, non-unique, unvalidated | **MEDIUM** | `0050_organizations.php:17` | Constraints (`05` M-3) | 2–3h |
+| R-11 | No retention policy for signed XML | **MEDIUM** | absence | Policy + archive job | 4–8h |
+| R-12 | Arabic party names not modelled | **MEDIUM** | `0050:16`, `0080:28` | Migration `05` M-1 | 3–5h |
+| R-13 | Buyer address is free text | **MEDIUM** | `0080_invoices.php:30` | Migration `05` M-2 | 4–6h |
+| R-14 | Invoice-type bit mapping asserted only by comment | **LOW** | `0080:50-54` | One table-driven test | 2–3h |
+| R-15 | No written ZATCA-downtime runbook | **LOW** | absence | Write it | 2–4h |
+| ~~R-16~~ | ~~Conformance suite red on document-level discount~~ **CLOSED during this audit** | — | Was reproduced (23/1); fixed by `XmlBuilder::breakdown()` `:598` while this was being written. **25/25 conformance tests now pass** | Done | — |
 
 ---
 
-## R-3 in detail — the four questions only the spec can answer
+## STEP 6 — Chain integrity under concurrency
 
-These are flagged rather than guessed at. **Do not act on the assumptions
-below without checking them against the specification.**
+### The verdict
 
-| # | Question | Current code | Why it matters |
-|---|---|---|---|
-| **Q1** | Correct `CustomizationID`? | `urn:oasis:names:specification:ubl:xpath:Invoice-2.0:sac-mod` — a generic OASIS string — at [`XmlBuilder.php:125`](../app/Domains/Compliance/Fatoora/Services/XmlBuilder.php#L125) | **The conformance run does not settle this**: the SDK’s Schematron and XSLT contain no `CustomizationID` rule, so a green run is silent on it. ASSUMPTION: ZATCA expects `urn:sa:zatca:documents:1.0`. Needs reading against the XML Implementation Standard directly. |
-| **Q2** | ~~`ProfileID` per document type~~ **SETTLED** | `reporting:1.0` for every type — [`XmlBuilder.php:127-137`](../app/Domains/Compliance/Fatoora/Services/XmlBuilder.php#L127-L137) | Settled against ZATCA’s SDK samples: BT-23 is `reporting:1.0` on all nineteen, and the validator rejects anything else as `BR-KSA-EN16931-01`. Clearance is chosen by the endpoint, not by a field in the document. Pinned by `XmlProfileTest:66` and a negative assertion at `:75`. |
-| **Q3** | Is the ICV/PIH chain per **taxpayer** or per **EGS unit**? | Per taxpayer — `hash_chain_state` PK is `org_id` ([`0160:14`](../database/migrations/0160_hash_chain.php#L14)), `generateNextIcv($organizationId)` ([`Invoice.php:212`](../app/Domains/Invoice/Models/Invoice.php#L212)) | Branches are modelled as EGS units *everywhere else* — separate certificates, separate onboarding, branch-scoped credential paths. If ZATCA requires a chain per unit, this is **the most expensive defect in the codebase**, and it gets worse with every invoice issued. |
-| **Q4** | Is a separate Arabic party name mandated? | No bilingual columns; one `name` / `buyer_name` | Cheap now (a migration), expensive after data exists. |
+> **ICV allocation is safe. PIH linkage is not.**
 
-**Q3 is the one to settle first.** Q1, Q2 and Q4 are hours of work to correct.
-Q3 is a re-keying of the chain, and its cost grows monotonically.
+Two concurrent invoice creations **cannot** produce a duplicate ICV. Two
+concurrent *issuances* **can** produce two invoices claiming the same
+predecessor, which is a broken chain and a ZATCA rejection.
 
-### Why Q1 still matters
+### Why ICV is safe (and it is genuinely well done)
 
-`XmlProfileTest` pins both constants, so neither drifts unnoticed — but the test
-says plainly what that is worth: *"a tripwire, not a certificate."*
+`app/Domains/Invoice/Models/Invoice.php:216-234`:
 
-Q2 turned out to be wrong, and the SDK caught it because ZATCA enforces BT-23 as
-`BR-KSA-EN16931-01`. **`CustomizationID` has no such rule**, so the validator
-will never object to a wrong value. An unenforced field can still be wrong, and
-this one has to be read from the specification rather than tested for.
+```php
+return DB::transaction(function () use ($organizationId) {
+    DB::table('organizations')->where('id', $organizationId)
+        ->lockForUpdate()->first();          // :219-222
+    $highest = static::withoutTenantScope(
+        fn () => static::query()->where('org_id', $organizationId)->max('icv')
+    );
+    return ((int) $highest) + 1;
+});
+```
 
-`FatooraValidate` reads the generated document rather than printing a fixed
-checklist, so it can report a missing element instead of only confirming
-presence (`XmlProfileTest::test_checklist_can_report_absence`).
+Three things are right, and one of them is subtle:
+
+1. **The lock is on the `organizations` row, not on invoice rows.** The
+   docblock at `:200-206` explains why: `SELECT MAX(icv) ... FOR UPDATE` locks
+   nothing for an organization's *first* invoice, so two concurrent requests
+   both read no rows and both allocate 1. The organization row always exists.
+   This is the exact bug most implementations ship with.
+2. **The tenant scope is lifted** (`:229-231`), so a request without tenant
+   context cannot read zero rows and restart the counter at 1.
+3. **`invoices_org_icv_unique`** (`0080_invoices.php:67`) is the backstop — a
+   collision fails the INSERT rather than corrupting the chain.
+
+Both real creation paths wrap this in an outer transaction, which is what the
+docblock at `:207-211` requires so the savepoint holds the lock until after the
+INSERT:
+
+- `app/Domains/Pipeline/Services/InvoiceDrafter.php:46` — `DB::transaction`
+- `app/Domains/Invoice/Http/Controllers/InvoiceController.php:53` — `DB::transaction`
+
+Verified by 5 passing tests including `test_duplicate_icv_rejected` and
+`test_counter_is_per_org`.
+
+### Why PIH is not safe — R-1
+
+The PIH is **not** stored on the invoice. It is derived
+(`Invoice.php:383-391`):
+
+```php
+return static::withoutTenantScope(fn (): ?string => static::query()
+    ->where('org_id', $this->org_id)
+    ->where('icv', '<', $this->icv)
+    ->whereNotNull('hash')          // <-- skips unhashed drafts
+    ->orderByDesc('icv')
+    ->value('hash'));
+```
+
+`whereNotNull('hash')` is deliberate and tested
+(`PreviousHashTest::test_unhashed_drafts_are_skipped`). It is also the hazard.
+
+In `Submitter::generate()` the read happens at **`:68`** — *before* the
+transaction that writes the hash and the chain entry opens at **`:84`**. There
+is no lock between them.
+
+**Failure sequence** (single tenant, two concurrent requests):
+
+```
+t0  A creates invoice icv=5   (ICV lock held and released)
+t1  B creates invoice icv=6   (ICV lock held and released)
+t2  B reaches Submitter::generate()  :68
+      previous_invoice_hash -> highest icv < 6 with a hash
+      icv=5 is still unhashed, so it is SKIPPED
+      B gets H4  (the hash of icv=4)
+t3  A reaches Submitter::generate()  :68
+      previous_invoice_hash -> highest icv < 5 with a hash
+      A gets H4
+t4  Both transactions commit.
+
+Result: icv=5 and icv=6 both declare PIH = H4.
+        The chain forks. icv=6 does not reference icv=5.
+```
+
+**Nothing prevents this.** The unique constraints added in
+`0200_hash_chain_unique_icv.php` are on `(org_id, icv)` and `invoice_id` —
+they guarantee one entry per position and per document, but say nothing about
+`previous_hash`. Two rows with different `icv` and the same `previous_hash`
+satisfy both constraints.
+
+`fatoora:verify-hash-chain` (weekly, `routes/console.php:89`) would eventually
+detect it — a week later, after the documents have been submitted.
+
+**How likely?** Low at one invoice at a time; **near-certain under POS load or
+any batch import**, which is precisely the "POS/retail scenarios with
+intermittent connectivity" the offline queue was built for
+(`routes/console.php:66-69`).
+
+**Fix.** Take the same organization-row lock for issuance that allocation
+already takes, and move the PIH read inside it:
+
+```php
+DB::transaction(function () use ($invoice, ...) {
+    DB::table('organizations')->where('id', $invoice->org_id)
+        ->lockForUpdate()->first();
+    $previousHash = $invoice->previous_invoice_hash;   // now serialised
+    $complianceData = $this->compliance->generateComplianceData(...);
+    $invoice->update([...]);
+    $this->chain->record(...);
+});
+```
+
+Signing inside a transaction lengthens it; measure before accepting. The
+alternative — a dedicated advisory lock keyed on `org_id` — avoids holding a
+row lock across a CPU-bound signature.
+
+**Test to add first (it should fail):** two invoices at icv N and N+1, sign
+N+1 before N, assert N+1's PIH equals N's hash rather than N-1's.
+
+### R-6 — the offline queue knows about this and does nothing
+
+`OfflineQueue.php:421-430`:
+
+```php
+if ($currentState && $invoice && $invoice->hash) {
+    // The PIH in the queued invoice should match what was current at queue time
+    // If chain has advanced, we may need to re-sign
+    Log::debug('Validating queued item hash chain', [...]);
+}
+```
+
+The comment states the exact condition. The body **only writes a debug log**.
+Nothing compares the queued PIH to `$currentState->last_hash`; nothing
+re-signs; the item proceeds regardless.
+
+The ICV-conflict check immediately above it (`:384-398`) is real — it detects
+the conflict and returns `action => 'regenerate_icv'`. The chain check was
+written to the same shape and left unfinished.
 
 ---
 
-## Step 6 — Chain integrity under concurrency
+## STEP 7 — Failure paths
 
-**Verdict: the ICV chain is safe under concurrent load on MySQL/PostgreSQL.**
-This is one of the better-engineered parts of the system.
+### Does the system distinguish blocking clearance from non-blocking reporting?
 
-### Why it holds
+**Yes, and better than most.** `Submitter.php:183-199` branches on
+`$invoice->requiresClearance()`. `ClearanceState.php:119-120` maps responses
+*per document type*:
 
-`Invoice::generateNextIcv()` ([`Invoice.php:212-230`](../app/Domains/Invoice/Models/Invoice.php#L212-L230))
-takes `lockForUpdate()` on the **`organizations` row**, not on invoice rows.
-The docblock ([`:198-209`](../app/Domains/Invoice/Models/Invoice.php#L198-L209))
-explains why the obvious alternative is wrong, and it is right:
+```php
+? ['REPORTED' => STATE_REPORTED, 'NOT_REPORTED' => STATE_REJECTED]
+: ['CLEARED'  => STATE_CLEARED,  'NOT_CLEARED'  => STATE_REJECTED]
+```
 
-> Locking `SELECT MAX(icv) ... FOR UPDATE` looks equivalent but has a hole: for
-> an organization's first invoice there are no invoice rows to lock, so two
-> concurrent requests both read no rows and both allocate 1.
+with a docblock at `:11-13` recording that only CLEARED is terminal for one and
+REPORTED for the other, and that "treating a successful call as a terminal
+state" is the mistake being avoided. `invoice_submissions.submission_type` is an
+enum of exactly `clearance|reporting` (`0140_submissions.php:19`).
 
-Three layers of defence:
+### Trace of each failure
 
-1. **The lock** serialises allocation on a row that always exists.
-2. **The transaction boundary** keeps it held until after the INSERT. Both real
-   creation paths comply — `InvoiceDrafter::draft()`
-   ([`:46`](../app/Domains/Pipeline/Services/InvoiceDrafter.php#L46), whose
-   docblock states the requirement explicitly) and `InvoiceController::store()`
-   ([`:53`](../app/Domains/Invoice/Http/Controllers/InvoiceController.php#L53)).
-   Laravel nests the inner transaction as a savepoint, so the lock survives to
-   the outer commit.
-3. **`unique(org_id, icv)`** ([`0080:66`](../database/migrations/0080_invoices.php#L66))
-   fails the insert rather than corrupting the chain. `IcvAllocationTest::test_duplicate_icv_rejected`
-   asserts exactly this.
-
-PIH inherits the safety: `getPreviousInvoiceHashAttribute()` orders by **ICV,
-not `created_at`** — deliberately, per its docblock ([`:352-354`](../app/Domains/Invoice/Models/Invoice.php#L352)),
-because wall-clock ordering is not deterministic under concurrent inserts.
-
-### Four caveats
-
-1. **A third creation path would break it.** The guarantee depends on callers
-   wrapping `Invoice::create()` in a transaction — a convention, not a
-   constraint. The unique index degrades this from corruption to a failed
-   insert, but a new code path that forgets will throw under load.
-   *Mitigation: an architecture test asserting every `Invoice::create()` is
-   inside a transaction. ~2 h.*
-
-2. **`lockForUpdate()` is a no-op on SQLite** — which is what the test suite
-   runs on. **The concurrency property is therefore not covered by any passing
-   test**; only the unique-index backstop is. The reasoning is sound and the
-   production driver will honour it, but per this audit's own rules the lock
-   itself is PRESENT-UNVERIFIED.
-
-3. **Gapless is not guaranteed** (gap-matrix item 8). A transaction that rolls
-   back after allocation burns that ICV permanently — `MAX(icv)+1` never reuses
-   it. ZATCA cares about monotonic sequence; whether it tolerates gaps is
-   effectively **Q5** and I could not resolve it from the codebase.
-
-4. **`hash_chain_history` accepts duplicate `(org_id, icv)`** — R-6. The audit
-   trail of the chain is less constrained than the chain.
-
----
-
-## Step 7 — Failure paths
-
-| Scenario | What happens | Verdict |
+| Failure | Handling | Verdict |
 |---|---|---|
-| **ZATCA unreachable** | `Connectivity` + `CircuitBreaker` probe first; `OfflineFallback::submit()` `:55` routes to `queueForOffline()` before attempting. On `ConnectionException` mid-flight, `:79-84` catches and queues. `offline_queue` drained by `fatoora:process-offline --limit=50` (scheduled). Invoice stays **Issued** with a valid hash and QR. | ✅ **Handled well.** Correct for B2C. See R-4 for B2B. |
-| **400 / rejection** | `updateInvoiceStatus()` `:379-404` sets `status = Rejected`, stores `clearance_status`, `reporting_status`, `validation_status`, **`warnings` and `errors` separately**. `InvoiceRejected` event → tenant webhook. `ErrorCode.php` maps 485 lines of codes. | ✅ **Handled well.** |
-| **WARNING response** | Modelled as a **first-class distinct outcome**: `warning` in the `state` enum (`0140:50`), `conditionally_accepted` in `clearance_state` (`:57`), a separate `zatca_warnings` JSON column (`:60`), and its own `InvoiceWarning` event. | ✅ **Better than most.** A warning is not silently coerced to success. |
-| **Mid-request timeout** | `SubmissionIdempotency` (unique `idempotency_key`, `0140:37`) with `status` and `attempt_count` makes retry safe; `DuplicateDetector` (396 L) is a second guard; `ProcessFatooraSubmission` retries on `backoff [10,60,300]`, then `failed()` `:385-418` marks terminal state, clears `next_retry_at`, logs at error, fires `InvoiceFailed(permanent: true)`. | ✅ **Handled.** Unknown-outcome timeouts are the classic double-submission risk and idempotency addresses it. |
+| **ZATCA unreachable** | `Connectivity` → `CircuitBreaker` → `OfflineFallback` → `offline_queue` table; `fatoora:process-offline` every 5 min (`routes/console.php:73`). Covered by `OfflineFallbackTest`, `OfflineQueueTest`, `CircuitBreakerTest` — all passing | **Good** — but see R-6, items resume with a possibly stale PIH |
+| **400 rejection** | `ClearanceState` → `STATE_REJECTED`; `zatca_errors` json populated (`0140:18`); `last_error_code` + `last_error` (`:25-26`); `ErrorCode::getMaxRetries()` (`ProcessFatooraSubmission.php:279`) distinguishes retryable from terminal so a 400 is not retried into the ground | **Good** |
+| **WARNING response** | Distinct `warning` state in the enum (`0140:7`), separate `zatca_warnings` column, `conditionally_accepted` in `clearance_state` (`:14`) | **Good** — genuinely distinguished, not folded into success |
+| **Mid-request timeout** | `fatoora.timeout` / `connect_timeout` (`config/fatoora.php:100-101`); `timeout` state in `clearance_state`; `SubmissionIdempotency` prevents a retry double-submitting; `DuplicateDetector` as second defence; job `timeout` 120s (`ProcessFatooraSubmission.php:64`) | **Good** — this is the case most implementations get wrong |
+| **Max retries exhausted** | `failed()` `:407-440` — state `failed`, idempotency updated, state transition logged, `Log::error`, `InvoiceFailed` event | **Adequate but see R-7** |
 
 ### Is anything silently swallowed?
 
-**No.** I looked specifically for this. Every catch block in `PipelineService`
-(`:118-133`, `:165-189`) logs with context and returns the error to the caller.
-`Submitter` audit-logs every submission (`:192-196`). The state machine records
-transitions with actor and IP. `LogSanitizer` (253 L) keeps secrets out without
-dropping the events.
+I found **no empty catch blocks** and no swallowed exceptions on the submission
+path. Errors are logged with context and re-thrown for queue retry
+(`ProcessFatooraSubmission.php:192` — `throw $e; // Re-throw for queue retry`).
 
-Two narrower notes:
-- `validateCertificate()` returns early when `config('fatoora.features.certificate_revocation_check')`
-  is false ([`Submitter.php:216-218`](../app/Domains/Compliance/Fatoora/Services/Submitter.php#L216)) —
-  a deliberate switch, but it disables revocation checking silently at runtime.
-- `validateReportingDeadline()` has the same shape via `fatoora.reporting.enforce_deadline`
-  ([`:267`](../app/Domains/Compliance/Fatoora/Services/Submitter.php#L267)).
+Three things are *quiet* rather than swallowed:
 
-Both are legitimate operational escape hatches. Neither is logged when it fires.
+1. **R-6** — the offline chain check logs at `debug` and continues. On a
+   production log level of `info` or above, it is invisible.
+2. **R-7** — final failure raises `InvoiceFailed`, which
+   `Listeners/DispatchInvoiceWebhook` turns into a tenant webhook. **There is
+   no operator-facing alert.** Compare `CheckCertificateExpiry.php`, which
+   emails (`:227`) *and* posts to Slack (`:247-252`). A tenant with no webhook
+   configured, or a webhook endpoint that is itself down, means a permanently
+   failed legal document that nobody is told about.
+3. **R-4** — nothing reconciles. `VerifyHashChain` checks the chain against
+   itself (`:124-125`), never against ZATCA.
 
-### Does the system distinguish blocking B2B from non-blocking B2C?
+### R-2 — the archived document may not be the submitted one
 
-**Partly — at the endpoint, not at the outcome.** This is R-4.
+This is separate from R-1 and just as serious.
 
-✅ It **does** route correctly: `requiresClearance()` selects
-`POST /invoices/clearance/single` vs `POST /invoices/reporting/single`
-([`Submitter.php:171-186`](../app/Domains/Compliance/Fatoora/Services/Submitter.php#L171-L186)),
-and it **does** enforce the B2C 24-hour window ([`:254-298`](../app/Domains/Compliance/Fatoora/Services/Submitter.php#L254)).
+`Submitter::generate()` signs the document and stores it
+(`:84-98` — `signed_xml`, `hash`, `qr_code`, `status = Issued`).
 
-❌ It **does not** distinguish a *failed clearance* from a *failed report*. The
-invoice is marked `Issued` at `Submitter.php:80-86` — before submission is
-attempted — and `PipelineService` returns an issued invoice regardless. For B2C
-that is correct and required (the offline queue depends on it). For B2B,
-clearance is pre-issuance: an uncleared standard invoice is not legally
-issuable, and the ERP receives one that looks issued.
+`Submitter::submit()` then **signs it again** (`:172-181`):
 
-**Suggested shape:**
-
-```
-B2C (simplified)   issue → report → queue on failure      ← current behaviour, correct
-B2B (standard)     draft → clear → issue only on CLEARED
-                          └─ on failure: stay pending_clearance,
-                             return a non-issued result, do NOT
-                             hand the ERP a QR to print
+```php
+$complianceData = $this->compliance->generateComplianceData(
+    invoice: $invoice,
+    organization: $organization,
+    previousInvoiceHash: $invoice->previous_invoice_hash,   // re-read
+    ...
+);
 ```
 
-This is the single largest behavioural change in this audit and it interacts
-with the offline queue, `PipelineResult` and the ERP contract. Do not start it
-before Q1–Q3 are answered — the sandbox run may change what "cleared" means in
-practice.
+and submits `$complianceData['xml']` — **not** the `signed_xml` it stored at
+issuance. If any input changed between the two calls, the submitted document
+differs from the archived one.
+
+The PIH is exactly such an input. Given R-1's interleaving, an invoice can be
+issued with PIH = H4 and submitted with PIH = H5. Then:
+
+- `invoices.signed_xml` holds one document,
+- ZATCA received a different one,
+- `invoices.hash` and the `hash_chain_history` entry describe the first,
+- and gap-matrix item #34 ("the ZATCA-cleared XML is what gets stored and sent
+  to the buyer") is violated in the worst way — the buyer's copy and the
+  authority's copy disagree.
+
+Even without R-1 this is fragile: re-signing produces a new timestamp in the
+XAdES `SigningTime`, so the two documents are unlikely to be byte-identical
+regardless.
+
+**Fix.** `submit()` should send the stored `signed_xml` and its stored `hash`,
+not re-derive them. Issuance is the signing event; submission is transport.
+Add a test asserting `submit()` transmits exactly the bytes in
+`invoices.signed_xml`.
+
+---
+
+## Severity rationale
+
+R-1 and R-2 are CRITICAL not because they will fire tomorrow — with one
+invoice at a time they never fire — but because they are **silent, produce
+legally invalid documents, and are discovered by ZATCA rather than by you**.
+They are also the two cheapest to fix *now*, while there is no production data
+and no client. After go-live, R-1 requires reconstructing a chain.
+
+R-5 was downgraded from HIGH after finding
+`tests/Feature/Compliance/ZatcaConformanceTest.php`, which runs ZATCA's own
+validator (XSD, EN16931, KSA Schematron, PIH) over generated documents. Schema
+validation is real and has been run — commit `697ea28` records it forcing fixes
+across XAdES signing, `DocumentBuilder` and `XmlBuilder`. What remains is that
+the oracle is **opt-in and invisible**: `ZATCA_SDK_PATH` appears in no
+`.env.example`, no CI workflow and no document, so it is off by default and
+nothing reminds anyone it exists. Separately, there is still no schema check on
+the **runtime** issuance path — `InvoiceValidator::validateXml()` has zero
+callers and its `schemaValidate` line is commented out at `:526`.
+
+
+---
+
+## R-16 — the conformance suite was red, and is now green
+
+> **CLOSED.** Fixed during this audit by concurrent work on the tree. The
+> apportionment fix landed in `XmlBuilder::breakdown()` (`:598`), which spreads
+> a document-level discount across tax categories in proportion to each
+> category's net and recomputes tax on the reduced base. All 25 conformance
+> tests pass. **My proposed fix below was wrong** — ZATCA's own
+> `Standard Invoice with Document Level Charge.xml` sample carries neither
+> `BaseAmount` nor `MultiplierFactorNumeric`, so the original code comment was
+> correct and the defect was arithmetic, not structural. Kept for the record.
+
+### Original finding
+
+Found by running it. The SDK is on this machine and the harness had simply
+never been pointed at it in this environment.
+
+```
+ZATCA_SDK_PATH=c:/Users/Shamil/Personal/Zatca/zatca-einvoicing-sdk-Java-238-R3.4.8/zatca-einvoicing-sdk-Java-238-R3.4.8
+php artisan test --filter=ZatcaConformanceTest
+  -> Tests: 1 failed, 23 passed (166 assertions) - 53.10s
+```
+
+The failure, at `tests/Feature/Compliance/ZatcaConformanceTest.php:255`:
+
+```
+an advisory fired on a discounted invoice.
+  BR-KSA-EN16931-05: Allowance/Charge percentage (BT-94, BT-101, BT-138, BT-143)
+    must be provided when the allowance/Charge base amount (BT-93, BT-100,
+    BT-137, BT-142) is provided.
+  BR-KSA-EN16931-03: Allowance/Charge amount (BT-92, BT-99, BT-136, BT-141)
+    must equal base amount * percentage / 100 if base amount and percentage exists.
+```
+
+**These are warnings, not errors.** `businessRules($result['errors'])` asserted
+clean first (`:250-253`), so ZATCA's validator *accepts* the document. The test
+then asserts no advisories fired, and two did.
+
+### Why the existing fix did not take
+
+`XmlBuilder.php:460-472` carries a deliberate decision to emit **neither**
+element, with reasoning:
+
+> "BT-93 and BT-94 travel together: BR-KSA-EN16931-05 requires the percentage
+> whenever the base amount is given […] This emitted the base and […]
+> deliberately skipped the percentage as 'optional' — which is true of the pair
+> and not of one without the other, so every discounted invoice drew both
+> rules. ZATCA's own document-level charge sample carries neither."
+
+The reasoning is sound and the code does what it says — `grep -rn "BaseAmount"
+app/` returns **only that comment**; the element is never emitted, at document
+level (`addAllowanceCharge`, `:427-480`) or line level
+(`buildLineAllowanceCharge`, `:860-890`).
+
+**The rules fire regardless.** So dropping both did not silence them, which
+means the SDK's Schematron is not gated on `BaseAmount` being present the way
+the rule text reads. **ASSUMPTION:** the implementation asserts the presence of
+`MultiplierFactorNumeric` on any `AllowanceCharge`, and the rule prose
+describes the intent rather than the check.
+
+### Recommended direction
+
+Try the opposite of the current fix: emit **both** elements together —
+`cbc:BaseAmount` equal to the pre-discount taxable amount and
+`cbc:MultiplierFactorNumeric` equal to `amount / base * 100`, rounded so that
+BR-KSA-EN16931-03's arithmetic (`amount = base x pct / 100`) holds exactly at
+2dp. Then re-run the suite; it is a five-minute feedback loop now that the SDK
+path is known.
+
+If that also fails, the next step is to dump the generated `cac:AllowanceCharge`
+and compare it element-by-element against ZATCA's own sample in
+`<SDK>/Data/` — the harness already validates that sample
+(`test_the_authority_own_sample_passes`, which **passes**), so a working
+reference is available locally.
+
+**Severity HIGH, not CRITICAL:** ZATCA accepts these documents today. But the
+suite is red, and a red suite that nobody runs is how the BT-23 defect survived
+715 passing tests in the first place.

@@ -1,204 +1,174 @@
 # 05 — Data Model
 
-Sixteen migrations, ordinal-numbered `0010`–`0190`, all in
-[`database/migrations/`](../database/migrations/). Squashed/consolidated rather
-than incremental — there is one migration per table group, not a history of
-`add_x_to_y` files. A generated `docs/schema.sql` accompanies them.
+32 tables across 17 migrations. The compliance-relevant ones are
+`organizations`, `branches`, `compliance_profiles`, `invoices`,
+`invoice_lines`, `invoice_submissions`, `submission_state_logs`,
+`submission_idempotency`, `offline_queue`, `hash_chain_state`,
+`hash_chain_history`.
 
 ---
 
 ## Required-field audit
 
-Every field the brief asked about, against the schema as it stands.
-
-### ✅ Present and correct
-
-| Field | Where | Notes |
-|---|---|---|
-| **Seller VAT number** | `organizations.vat_number` varchar(15) nullable — [`0050:17`](../database/migrations/0050_organizations.php#L17) | Length 15 is right for a Saudi VAT number. Covered by `tests/Feature/Organization/VatNumberTest.php`. |
-| **Seller TIN / CR** | `organizations.cr_number` varchar(20) nullable — [`0050:25`](../database/migrations/0050_organizations.php#L25) | Commercial Registration. |
-| **Seller address** | `organizations.{street,building_number,additional_street,district,city,postal_code}` — [`0050:19-24`](../database/migrations/0050_organizations.php#L19-L24) | `postal_code` char(5) — correct for KSA. All six ZATCA address parts present. |
-| **Buyer identifiers** | `invoices.{buyer_name,buyer_vat_number,buyer_address}` — [`0080:26-28`](../database/migrations/0080_invoices.php#L26-L28) | `buyer_address` is `text`, cast to `array` (`Invoice.php:86`) — a JSON blob, not columns. |
-| **Invoice UUID** | `invoices.id` uuid PRIMARY KEY — [`0080:14`](../database/migrations/0080_invoices.php#L14) | `HasUuids`; doubles as the ZATCA submission UUID (`Submitter.php:176`). |
-| **ICV** | `invoices.icv` unsignedBigInteger nullable — [`0080:57`](../database/migrations/0080_invoices.php#L57) | **`unique(['org_id','icv'])`** at [`0080:66`](../database/migrations/0080_invoices.php#L66). |
-| **PIH** | *derived* — `Invoice::getPreviousInvoiceHashAttribute()` [`Invoice.php:364-372`](../app/Domains/Invoice/Models/Invoice.php#L364-L372) | Deliberately no column; see "Two chains" below. |
-| **Invoice hash** | `invoices.hash` varchar(255) nullable — [`0080:39`](../database/migrations/0080_invoices.php#L39) | |
-| **QR payload** | `invoices.qr_code` text nullable — [`0080:40`](../database/migrations/0080_invoices.php#L40) | Base64 TLV; `text` is ample for 9 tags. |
-| **Signed XML** | `invoices.signed_xml` longText nullable — [`0080:41`](../database/migrations/0080_invoices.php#L41) | |
-| **Submission status** | `invoice_submissions.state` enum(10) — [`0140:50`](../database/migrations/0140_submissions.php#L50) | `draft·queued·pending_submission·submitted·cleared·reported·warning·rejected·failed·cancelled` |
-| **ZATCA response payload** | `invoices.zatca_response` json — [`0080:58`](../database/migrations/0080_invoices.php#L58); `submission_idempotency.response_body`/`response_headers` — [`0140:23-24`](../database/migrations/0140_submissions.php#L23-L24) | Three layers of capture. |
-| **Clearance/reporting timestamps** | `invoice_submissions.{cleared_at,queued_at,signed_at,submitted_at,completed_at}` — [`0140:58,70-73`](../database/migrations/0140_submissions.php#L70-L73) | Genuinely granular. |
-| **Warning / error arrays** | `invoice_submissions.zatca_warnings` json + `zatca_errors` json — [`0140:60-61`](../database/migrations/0140_submissions.php#L60-L61) | **Separate columns** — the distinction ZATCA requires is modelled, not collapsed. |
-| **Invoice-type flags** | `invoices.{is_third_party,is_nominal,is_export,is_summary,is_self_billed}` boolean default false, each `->comment()`-ed with its BT-3 bit — [`0080:50-54`](../database/migrations/0080_invoices.php#L50-L54) | The columns from your brief. Mapping verified end-to-end by `InvoiceTypeCodeTest`. |
-| **Foreign currency** | `invoices.currency` char(3) default `SAR` + `exchange_rate` decimal(16,6) — [`0080:21-25`](../database/migrations/0080_invoices.php#L21-L25) | Docblock cites BR-KSA-CU-01 and explains the 6 dp. `ForeignCurrencyTest`, `ExchangeRateTest`. |
-| **Tax categories** | `invoice_lines.{tax_category char(1) default 'S', exempt_code, exempt_reason}` — [`0080:87-89`](../database/migrations/0080_invoices.php#L87-L89) | |
-| **EGS unit** | `invoices.branch_id` uuid nullable FK → `branches` — [`0080:17,60,71`](../database/migrations/0080_invoices.php#L17) | |
-| **ERP correlation** | `invoices.erp_reference_id` varchar(255) indexed — [`0080:55,61`](../database/migrations/0080_invoices.php#L55) | |
-| **Determinism metadata** | `invoices.{rule_version,schema_version,determined_at,signature_algorithm,hash_algorithm,cert_id}` — [`0080:43-48`](../database/migrations/0080_invoices.php#L43-L48) | Records *which rules* produced the document. Better than most implementations. |
-
-### ⚠️ Arabic fields — PARTIAL
-
-There are **no bilingual columns**. `organizations.name` and `invoices.buyer_name`
-are single varchar(255). `TextNormalizer` (297 L) handles Arabic text properly
-and `SellerNameBytesTest` guards byte length, but if ZATCA mandates a *separate*
-Arabic party name alongside the Latin one, the schema cannot express it.
-
-ASSUMPTION: a single field carrying Arabic satisfies the requirement. **Unverified
-— see [06-risks.md](06-risks.md) R-3.** If wrong, this is a migration, not a
-redesign.
+| Field | Present? | Where | Assessment |
+|---|---|---|---|
+| Seller VAT number | Yes | `organizations.vat_number` varchar(15) nullable — `0050_organizations.php:17` | **Wrongly nullable.** A ZATCA-onboarded org cannot lack one. Indexed (`:37`) — good |
+| Seller TIN / other ID | Partial | `organizations.cr_number` varchar(20) nullable — `:24` | ZATCA's "other seller ID" accepts CRN/MOM/MLS/700/SAG. Only CRN is modelled; **the scheme identifier is not stored**, so the emitted `PartyIdentification/@schemeID` can only ever be `CRN` |
+| Seller address | Yes | `street`, `building_number`, `additional_street`, `district`, `city`, `postal_code`, `country` — `:18-23` | Matches ZATCA's required address parts. All nullable (see below) |
+| Buyer name | Yes | `invoices.buyer_name` varchar(255) **not null** — `0080_invoices.php:28` | Correct |
+| Buyer VAT | Yes | `invoices.buyer_vat_number` nullable — `:29` | Correctly nullable (B2C has none) |
+| Buyer address | Yes | `invoices.buyer_address` text nullable — `:30` | **Free text, not structured.** ZATCA wants discrete address components for standard invoices. This is a real gap for B2B |
+| Invoice UUID | Yes | `invoices.id` uuid PK — `:14`; `invoice_submissions.zatca_uuid` — `0140_submissions.php:10` | Correct |
+| ICV | Yes | `invoices.icv` unsignedBigInteger **nullable** — `:47`; unique `(org_id, icv)` — `:67` | Nullable is deliberate (drafts). Unique constraint present |
+| PIH | **No column** | Derived by accessor `Invoice.php:383-391`; persisted only in `hash_chain_history.previous_hash` char(64) — `0160_hash_chain.php:30` | Deliberate and documented (`Invoice.php:362-366`). Defensible, but see R-1 |
+| Invoice hash | Yes | `invoices.hash` varchar(255) nullable — `:39`; `hash_chain_history.invoice_hash` char(64) — `:29` | Inconsistent width: 255 vs 64. Harmless, untidy |
+| QR payload | Yes | `invoices.qr_code` text nullable — `:40` | Correct |
+| Submission status | Yes | `invoices.status`; `invoice_submissions.state` enum of 10 — `0140_submissions.php:7`; `clearance_state` enum of 7 — `:14` | Excellent. Distinct `clearance_status` and `reporting_status` strings too (`:12-13`) |
+| ZATCA response payload | Yes | `invoices.zatca_response` json — `:48`; plus `zatca_warnings` / `zatca_errors` json — `0140:17-18` | Correct |
+| Clearance/reporting timestamp | Yes | `invoice_submissions.cleared_at`, `submitted_at`, `signed_at`, `queued_at`, `completed_at` — `0140:15,27-30` | Thorough |
+| Warning/error arrays | Yes | Separate `zatca_warnings` and `zatca_errors` json — `0140:17-18` | Correctly separated, not one blob |
+| Arabic fields | **Partial** | Present on `branches` (`0070_branches.php`); **absent on `organizations`** (only `name`, `:16`) and **absent on `invoices`** (only `buyer_name`, `:28`) | **Gap.** See M-1/M-2 below |
+| Invoice-type flags | Yes | `is_third_party`, `is_nominal`, `is_export`, `is_summary`, `is_self_billed` — all boolean default false with per-bit ZATCA comments — `:50-54` | Complete and well documented |
+| `payment_means_code` | Yes | varchar(10) nullable — `:32` | Correct |
+| Billing reference | Yes | `billing_ref` varchar(255), `adjustment_reason` varchar(255) — `:33-34` | Required for credit/debit notes (BR-KSA-17). Correctly nullable |
+| Exchange rate | Yes | `decimal(16,6)` nullable — `:27`, with a comment citing BR-KSA-CU-01 | Well handled |
+| Tax category | Yes | `invoice_lines.tax_category` char(1) default `S`, `exempt_code`, `exempt_reason` — `0080:85-87` | Correct |
 
 ---
 
-## Two chains, one truth — the schema's sharpest edge
+## Problems, ranked
 
-The PIH exists **twice**, computed two different ways:
+### P-1 — `organizations.vat_number` is nullable and unconstrained
 
-| | Source | Mechanism |
-|---|---|---|
-| **A** | `invoices` table | `getPreviousInvoiceHashAttribute()` — live query: `where org_id … where icv < $this->icv … whereNotNull('hash') … orderByDesc('icv')->value('hash')` ([`Invoice.php:364-372`](../app/Domains/Invoice/Models/Invoice.php#L364-L372)) |
-| **B** | `hash_chain_state` + `hash_chain_history` | Stored rows: `last_hash`, `last_icv`, `last_invoice_id`, `certificate_id`, `cert_transition` ([`0160`](../database/migrations/0160_hash_chain.php)) |
+`0050_organizations.php:17` — `string('vat_number', 15)->nullable()`.
 
-**Every consumer reads A.** `Submitter.php:66,99,165`,
-`ProcessFatooraSubmission.php:141`, `OfflineFallback.php:104` — all use the
-accessor. B is written and read by `OfflineQueue.php:384,417`,
-`VerifyHashChain.php:124`, and the platform dashboard.
+A Saudi VAT number is exactly 15 digits, starts and ends with `3`, and is the
+seller identity in every signed document. Nothing enforces length, format, or
+presence at the database level. `tests/Feature/Organization/VatNumberTest.php`
+exists and passes, so validation happens in the application — but an org can
+still be persisted without one and then used to sign.
 
-The accessor is well-reasoned — its docblock explains ordering by ICV rather
-than `created_at` "because wall-clock is not deterministic under concurrent
-inserts", and why the tenant scope is lifted. That is right.
+There is also **no unique constraint**. Two organizations can share a VAT
+number, which would merge two taxpayers' hash chains in every report keyed on
+VAT.
 
-But **nothing asserts A and B agree**, and they can diverge: `hash_chain_history`
-has only a *non-unique* index on `(org_id, icv)` ([`0160:37`](../database/migrations/0160_hash_chain.php#L37))
-while `invoices` has a *unique* constraint on the same pair. The table designed
-to be the tamper-evident record of the chain has weaker integrity guarantees
-than the table it is meant to attest.
+### P-2 — Arabic seller and buyer names are not modelled
 
----
+`organizations` has `name` only (`:16`); `invoices` has `buyer_name` only
+(`:28`). ZATCA requires Arabic for the seller name on all invoices and for the
+buyer on standard invoices. `branches` got Arabic columns; the two tables that
+feed the UBL `PartyName` did not.
 
-## Concurrency & constraint review
+`DocumentBuilder.php` references Arabic, so **ASSUMPTION:** it currently falls
+back to the Latin name or to a branch value. Either way the emitted document
+carries a Latin string in a field ZATCA expects Arabic in.
 
-| Constraint | Status |
-|---|---|
-| `invoices` unique `(org_id, icv)` | ✅ Present — the backstop that makes ICV allocation safe |
-| `submission_idempotency` unique `idempotency_key` | ✅ Present ([`0140:37`](../database/migrations/0140_submissions.php#L37)) |
-| `hash_chain_state` PK `org_id` | ✅ One row per tenant — "a second row would mean two competing heads" (`ChainState.php:14-16`) |
-| `hash_chain_history` unique `(org_id, icv)` | ❌ **Missing** — index only |
-| `invoices` unique `(org_id, invoice_number)` | ❌ **Missing** — index only ([`0080:62`](../database/migrations/0080_invoices.php#L62)) |
-| FKs with correct cascade | ✅ `org_id` cascades; `branch_id`/`profile_id` null on delete |
+### P-3 — `invoices.buyer_address` is unstructured text
 
----
+`:30` — `text('buyer_address')`. For a standard (B2B) invoice ZATCA requires
+discrete `StreetName`, `BuildingNumber`, `CitySubdivisionName`, `CityName`,
+`PostalZone`, `CountrySubentity`, `IdentificationCode`. A single text blob
+cannot populate them. The seller side got this right
+(`0050_organizations.php:18-23`); the buyer side did not.
 
-## Nullability review
+### P-4 — Seller address parts are all nullable
 
-Correctly nullable (populated later in the lifecycle): `hash`, `qr_code`,
-`signed_xml`, `icv`, `zatca_response`, `cert_id`, `exchange_rate`,
-`buyer_vat_number` (a B2C buyer has none).
+`0050_organizations.php:18-23`. Each is mandatory for a ZATCA-onboarded seller.
+Same class of problem as P-1: enforced in application code, not in schema.
 
-**Questionable:**
+### P-5 — Hash-width inconsistency
 
-- **`invoices.icv` is nullable** ([`0080:57`](../database/migrations/0080_invoices.php#L57)).
-  It is auto-assigned in `boot::creating` *only if* `org_id` is set
-  ([`Invoice.php:151-155`](../app/Domains/Invoice/Models/Invoice.php#L151-L155)).
-  Nullable is defensible for a draft, but an **Issued** invoice with a null ICV
-  is a compliance failure the schema permits.
-- **`invoices.status` and `type` are plain varchar(255)**
-  ([`0080:19-20`](../database/migrations/0080_invoices.php#L19-L20)) while
-  `invoice_submissions.state` is a proper `enum`. Enforcement lives only in the
-  PHP cast. Inconsistent, and the weaker choice is on the more important table.
-- **`hash_chain_state.certificate_id` is NOT NULL** ([`0160:18`](../database/migrations/0160_hash_chain.php#L18))
-  but `invoices.cert_id` is nullable. A pre-onboarding invoice cannot get a chain
-  state row.
+`invoices.hash` is `varchar(255)` (`:39`) while `hash_chain_history.invoice_hash`
+and `previous_hash` are `char(64)` (`0160:29-30`). A base64 SHA-256 is 44
+characters; hex is 64. The 255 column will silently accept a truncated or
+padded value that the chain columns would reject. Cosmetic today, a debugging
+trap later.
+
+### P-6 — `submission_idempotency` retention is unbounded
+
+**ASSUMPTION** (I did not read the table's full definition): nothing in
+`routes/console.php` prunes it, while `compliance:cleanup-offline-queue` prunes
+the offline queue daily. An idempotency ledger that grows forever eventually
+slows every submission.
 
 ---
 
-## Indexing review
+## What is right, and worth not breaking
 
-Well indexed: `invoices` carries 9 indexes, `invoice_submissions` 13.
-`compliance:index-health --alert` runs daily to catch drift.
-
-**Gaps:**
-
-| Missing index | Why it matters |
-|---|---|
-| `invoices.buyer_vat_number` | Gap-matrix item 35 asks for retrieval **by VAT number**. Seller-VAT works via `org_id`; **buyer-VAT is a full table scan.** |
-| `invoices.(org_id, document_type)` | `document_type` unindexed entirely; "all credit notes this quarter" scans. |
-| `invoices.(org_id, status, issue_date)` | The natural reconciliation query (item 40) has no covering index. |
-| `hash_chain_history` unique `(org_id, icv)` | Integrity, not performance — see above. |
-
-`invoices` is also missing an index on `supply_date`, which is the VAT-period
-determinant in some cases (`VatPeriodTracker` exists but queries `issue_date`).
+- **`invoices_org_icv_unique`** (`0080:67`) — the backstop that makes a
+  duplicate ICV an insert failure rather than a corrupted chain.
+- **`hash_chain_history` unique on `(org_id, icv)` *and* on `invoice_id`**
+  (`0200_hash_chain_unique_icv.php:27-28`). The migration's docblock is the
+  best piece of reasoning in the repository: without the first, "the record of
+  the chain can hold two entries at a position the chain itself cannot — the
+  one shape a comparison between them could never detect".
+- **`hash_chain_state` keyed on `org_id` as its primary key** (`0160:21`) —
+  one chain head per tenant, structurally.
+- **Legal-hold columns** on `organizations`: `hold_ref`, `legal_hold_at`,
+  `hold_expires_at` (`0050:26-28`).
+- **Index coverage is genuinely good.** `invoices` carries 9 indexes including
+  `(org_id, status)`, `(org_id, created_at)`, `issue_date`;
+  `invoice_submissions` carries `(state, next_retry_at)` — exactly the index a
+  retry sweeper needs.
+- **Every compliance table cascades from `organizations`**, so tenant deletion
+  is complete.
 
 ---
 
-## Required migrations
+## Migrations needed
 
-Dependency-ordered. None is large; together roughly **6–9 hours** including tests.
+Ordered by value. All are additive except M-4.
 
-### Priority 1 — correctness
-
-**`0200_cleared_xml.php`** — unblocks gap item 34 / risk R-1.
-```php
-Schema::table('invoices', function (Blueprint $t) {
-    // ZATCA returns the cleared document for B2B; that is the legal invoice,
-    // not the one we signed. signed_xml stays as the pre-clearance artefact.
-    $t->longText('cleared_xml')->nullable()->after('signed_xml');
-    $t->timestamp('cleared_xml_received_at')->nullable()->after('cleared_xml');
-});
+**M-1 · Arabic party names** — *required before sandbox*
 ```
-Then wire `FatooraResponse::$clearedInvoice` → this column in
-`Submitter::updateInvoiceStatus()`, and make invoice delivery/retrieval prefer
-`cleared_xml` over `signed_xml` when present.
-
-**`0210_chain_history_unique.php`** — closes the A/B divergence window.
-```php
-Schema::table('hash_chain_history', function (Blueprint $t) {
-    $t->dropIndex('hash_chain_history_organization_id_icv_index');
-    $t->unique(['org_id', 'icv'], 'hash_chain_history_org_icv_unique');
-});
+0210_arabic_party_names
+  organizations : + name_ar        varchar(255) nullable
+  invoices      : + buyer_name_ar  varchar(255) nullable
 ```
-⚠️ Will fail on existing duplicates — run a detection query first.
+Nullable at first so existing rows survive; tighten once backfilled.
 
-**`0220_invoice_number_unique.php`**
-```php
-Schema::table('invoices', function (Blueprint $t) {
-    $t->dropIndex('invoices_invoice_number_index');
-    $t->unique(['org_id', 'invoice_number'], 'invoices_org_number_unique');
-});
+**M-2 · Structured buyer address** — *required for standard invoices*
 ```
-An invoice number must be unique per taxpayer. Today only a non-unique index
-guards it, and `DuplicateDetector` enforces it in application code only.
-
-### Priority 2 — retrieval
-
-**`0230_retrieval_indexes.php`**
-```php
-Schema::table('invoices', function (Blueprint $t) {
-    $t->index('buyer_vat_number', 'invoices_buyer_vat_idx');
-    $t->index(['org_id', 'document_type'], 'invoices_org_doctype_idx');
-    $t->index(['org_id', 'status', 'issue_date'], 'invoices_org_status_date_idx');
-});
+0220_buyer_address_parts
+  invoices : + buyer_street, buyer_building_number, buyer_additional_street,
+              buyer_district, buyer_city  varchar(255) nullable
+            + buyer_postal_code  varchar(5)  nullable
+            + buyer_country      char(2)     nullable default 'SA'
+  (retain buyer_address for one release, then drop)
 ```
 
-### Priority 3 — depends on unresolved questions
+**M-3 · Seller identity integrity** — *required before a second tenant*
+```
+0230_seller_identity
+  organizations : + unique(vat_number)            [partial/filtered on NOT NULL]
+                  + seller_id_scheme  varchar(10) nullable   -- CRN|MOM|MLS|700|SAG
+  + CHECK vat_number IS NULL OR vat_number ~ '^3[0-9]{13}3$'   (Postgres)
+```
+Keep `vat_number` nullable — an org exists before onboarding — but block
+duplicates and malformed values.
 
-**`0240_arabic_party_names.php`** — *only if* R-3 confirms separate Arabic
-fields are mandated:
-```php
-$t->string('name_ar', 255)->nullable();       // organizations
-$t->string('buyer_name_ar', 255)->nullable(); // invoices
+**M-4 · Hash width alignment** — *cheap, do it while the table is small*
+```
+0240_align_hash_widths
+  invoices : hash  varchar(255) -> varchar(64)
+```
+Verify no existing row exceeds 64 first.
+
+**M-5 · Idempotency retention**
+```
+0250_idempotency_pruning
+  submission_idempotency : + index(created_at)
+  + scheduled command to prune older than N days
 ```
 
-**`0250_branch_scoped_chain.php`** — *only if* R-3 confirms the ICV/PIH chain is
-**per EGS unit** rather than per taxpayer. This one is **not small**: it
-re-keys `hash_chain_state` from `org_id` to `(org_id, branch_id)`, changes the
-`invoices` unique constraint to `(org_id, branch_id, icv)`, and rewrites
-`generateNextIcv()` and `getPreviousInvoiceHashAttribute()`. **Resolve the spec
-question before writing any of it** — and before onboarding a second branch,
-because migrating a live chain is far worse than getting it right first.
+**M-6 · Reconciliation support** — *pairs with gap-matrix #40*
+```
+0260_reconciliation
+  invoice_submissions : + index(org_id, submission_type, state)
+                        + last_reconciled_at  timestamp nullable
+```
 
-### Not recommended yet
-
-Tightening `invoices.icv` to NOT NULL, or converting `status`/`type` to enums,
-would be correct but both are breaking changes to a schema that has no
-production data. Do them **after** the sandbox run, when you know the shape is
-final — not before.
+Not proposed: a `previous_invoice_hash` column on `invoices`. The accessor is
+deliberate and reasoned (`Invoice.php:359-381`), and denormalising it would
+create a second source of truth for the chain. The fix for R-1 is a lock, not a
+column.

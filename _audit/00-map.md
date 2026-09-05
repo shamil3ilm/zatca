@@ -1,282 +1,151 @@
 # 00 — Compliance Surface Map
 
-**Scope:** read-only across `Masaar`, `masaar-erp-backend`, `masaar-erp-frontend`
-**Branch:** `main`
+**Audit date:** 2026-09-05 · **Auditor:** independent read-only pass
+**Masaar HEAD:** `60c2fc9` (2026-08-24) on `main`, 7 modified files uncommitted (docs + one command)
 
 ---
 
-## Where the ZATCA implementation lives
+## Correction to the brief, up front
 
-**In `Masaar`, under [`app/Domains/Compliance/Fatoora/`](../app/Domains/Compliance/Fatoora/)**
-— 46 files, ~15,100 lines. "Fatoora" is ZATCA's own name for the portal.
+Three of the premises in the audit request are wrong. Correcting them changes
+where the rest of this audit points.
 
-The invoice-type columns that identify a ZATCA document sit in Masaar's own
-schema, not in a separate package:
-
-- [`database/migrations/0080_invoices.php:50-54`](../database/migrations/0080_invoices.php#L50-L54)
-  — `is_third_party`, `is_nominal`, `is_export`, `is_summary`, `is_self_billed`,
-  each with a `->comment()` naming its ZATCA BT-3 bit.
-- [`database/migrations/0080_invoices.php:31`](../database/migrations/0080_invoices.php#L31)
-  — `payment_means_code`.
-
-**Three repositories carry compliance-relevant code, and only one implements
-it.** Nothing below is forced onto the wrong repo.
-
-### Repository naming
-
-Folder names and repository names agree:
-
-| Directory | GitHub repo | What it is |
-|---|---|---|
-| `Masaar` | `masaar` | compliance platform |
-| `masaar-erp-backend` | `masaar-erp-backend` | ERP |
-| `masaar-erp-frontend` | `masaar-erp-frontend` | ERP UI |
-
-Verified by `git ls-remote` against each clone's local `main`. Old names
-redirect: `zatca`→`masaar`, `qarar`→`masaar-erp-backend`,
-`masaar-frontend`→`masaar-erp-frontend`. One caveat —
-`github.com/shamil3ilm/masaar` addresses the **platform**; it previously
-addressed the ERP, so an external link using that URL resolves somewhere new.
-
-The `Masaar` folder keeps its capital M. Cosmetic: Windows resolves the path
-case-insensitively.
-
----
-
-## 1. What Masaar is
-
-A **multi-jurisdiction e-invoicing compliance API** — a Laravel 12 / PHP 8.4
-application that other people's ERPs call over HTTP to get invoices signed,
-cleared and reported to a tax authority.
-
-Self-described in [`README.md:1-11`](../README.md#L1-L11):
-
-| Country | Authority | Status per README |
-|---|---|---|
-| 🇸🇦 Saudi Arabia | ZATCA (Fatoora Phase 2) | "Feature complete — conformance suite pending" |
-| 🇦🇪 UAE | FTA (Peppol PINT AE) | "In development" |
-| 🇶🇦 Qatar | GTA | "Planned" |
-
-The README's own caveat is unusually honest and matches what I found:
-
-> It has **not** yet been validated against ZATCA's official conformance
-> fixtures, and signing keys are not yet held in a managed KMS.
-> — [`README.md:13-19`](../README.md#L13-L19)
-
-That claim is accurate. See [01-summary.md](01-summary.md).
-
-### Domain layout
-
-`app/Domains/` — ten domains, ZATCA confined to one:
-
-```
-app/Domains/
-├── Audit/          audit trail
-├── Auth/           JWT + session
-├── Compliance/     ← the entire compliance surface
-│   ├── ComplianceRouter.php        jurisdiction dispatch
-│   ├── Contracts/                  ComplianceEngine, SubmissionResult, ValidationResult
-│   ├── Fatoora/                    🇸🇦 ZATCA — 46 files, ~14,000 LOC
-│   └── FTA/                        🇦🇪 UAE — 10 files, ~1,000 LOC
-├── Invoice/        Invoice + InvoiceLine aggregate, enums
-├── Licensing/      per-customer licence keys, quota, phone-home
-├── Logging/
-├── Organization/   tenant, branch (= EGS unit), compliance profile
-├── Pipeline/       one-call "draft + submit" convenience path
-├── Platform/       Masaar-staff console
-└── Webhook/        outbound notification
-```
-
-`Compliance/Fatoora/` is the answer to "where does ZATCA logic live":
-
-| Sub-package | Notable contents |
+| Premise | Reality |
 |---|---|
-| `Services/` (23 files) | `XmlBuilder` (978 L), `XadesSigner` (1021 L), `CertificateService` (905 L), `KillSwitch` (702 L), `SubmissionTracker` (549 L), `InvoiceValidator` (532 L), `Submitter` (518 L), `OfflineQueue` (485 L), `EcdsaSigner`, `TlvEncoder`, `InvoiceHasher`, `QrCodeGenerator`, `CsidOnboarding`, `CredentialStore`, `CircuitBreaker`, `DuplicateDetector`, `VatPeriodTracker`, `TimestampValidator` |
-| `Client/` | `FatooraClient` (366 L) — the only place that speaks HTTP to ZATCA |
-| `Models/` | `InvoiceSubmission`, `ChainState`, `ChainEntry`, `OfflineItem`, `SubmissionIdempotency`, `SubmissionStateLog` |
-| `Jobs/` | `ProcessFatooraSubmission` (419 L) |
-| `Events/` | `InvoiceSubmitted/Cleared/Reported/Rejected/Warning/Failed` |
-| `DTOs/` | `InvoiceXmlData` (444 L), `CsrData`, `CsidResponse`, `FatooraResponse`, `QrCodeData`, `AddressData` |
-| `Http/Controllers/` | `OnboardingController`, `BranchOnboardingController`, `ComplianceController` |
+| "ZATCA logic lives in `./Zatca`" | **There is no `Zatca` directory.** `ls c:/laragon/www/` returns exactly three relevant entries: `Masaar`, `masaar-erp-backend`, `masaar-erp-frontend`. |
+| "`c:\laragon\www\erp-backend` / `erp-frontend`" | Actual names are **`masaar-erp-backend`** and **`masaar-erp-frontend`**. The unprefixed paths do not resolve. |
+| "four repos" | **Three.** |
+
+The migrations you remembered — `payment_means_code`, `is_third_party`,
+`is_nominal`, `is_export`, `is_summary`, `is_self_billed` — are real, and they
+are **in Masaar itself**, not in a separate package:
+`database/migrations/0080_invoices.php:32` (payment_means_code) and
+`:50-54` (all five BT-3 flags, each carrying a comment naming its ZATCA bit).
+
+So: **Masaar is the ZATCA implementation.** It is not a consumer of one.
 
 ---
 
-## 2. How the repos relate
+## What Masaar is
 
-**They are one system split across repos, plus one that is a genuinely separate
-product.** Specifically:
+A **standalone Laravel 12 / PHP 8.4 multi-jurisdiction e-invoicing compliance
+API**, self-described in `README.md:1-3` as "a multi-jurisdiction e-invoicing
+compliance API platform for GCC businesses".
+
+- Not a package. It is a full Laravel application with `artisan`, `bootstrap/`,
+  `routes/`, 17 migrations, and its own HTTP API.
+- Not abandoned. **235 commits total, 130 in the last 90 days**, last commit
+  12 days before this audit. This is the actively developed repo.
+- `composer.json:11-17` — `php ^8.4`, `laravel/framework ^12.0`,
+  `phpseclib/phpseclib ^3.0`, `tymon/jwt-auth ^2.2`. Pest 4 for tests.
+
+Jurisdictions are first-class: `app/Domains/Compliance/` holds
+`ComplianceRouter.php`, `Fatoora/` (Saudi, 16.5k LOC) and `FTA/` (UAE, early).
+
+## Repo relationship
 
 ```
-┌────────────────────────┐  HTTP/JSON, licence-key auth
-│   masaar-erp-backend   │ ───────────────────────────┐
-│      (Laravel ERP)     │                            │
-│  owns: sales,          │                            ▼
-│  manufacturing,        │           ┌────────────────────────────┐
-│  accounting            │           │          Masaar            │
-└───────────┬────────────┘           │  Compliance API platform   │
-            │ REST                   │  OWNS all ZATCA logic:     │
-            ▼                        │  UBL · ECDSA · XAdES · QR  │
-┌────────────────────────┐           │  ICV/PIH · CSID · submit   │
-│  masaar-erp-frontend   │           └────────────┬───────────────┘
-│    (React/Turborepo)   │                        │ HTTPS
-│  admin · staff · portal│                        ▼
-└────────────────────────┘                 ZATCA Fatoora API
+masaar-erp-frontend  (TypeScript, pnpm/turbo monorepo — apps/staff, apps/admin)
+        │  HTTP
+        ▼
+masaar-erp-backend   (Laravel ERP: Sales, Manufacturing, Accounting, Inventory)
+        │  HTTP — config/zatca-integration.php:5
+        │  ZATCA_INTEGRATION_URL, default http://localhost:8001/api/v1
+        │  client: app/Services/Compliance/MasaarClient.php
+        ▼
+Masaar               (compliance platform — owns ALL ZATCA logic)
+        │  HTTPS
+        ▼
+   ZATCA Fatoora
 ```
 
-### Evidence for the masaar-erp-backend → Masaar direction
+**This is one system split across three repos, plus one product.** They are not
+four separate products. The ERP is the invoice *source*; Masaar is the
+compliance *engine*; the frontend is the ERP's UI.
 
-- [`masaar-erp-backend/config/zatca-integration.php:5`](file:///c:/laragon/www/masaar-erp-backend/config/zatca-integration.php)
-  — `'url' => env('ZATCA_INTEGRATION_URL', 'http://localhost:8001/api/v1')`.
-  masaar-erp-backend calls a **separate HTTP service** for compliance.
-- [`masaar-erp-backend/app/Services/Compliance/CompliPayClient.php:17-21`](file:///c:/laragon/www/masaar-erp-backend/app/Services/Compliance/CompliPayClient.php)
-  — docblock: *"Communicates with the ZATCA middleware project for e-invoicing
-  compliance in Saudi Arabia."* That middleware project is Masaar.
-- [`masaar-erp-backend/app/Orchestrators/Sales/PostInvoiceOrchestrator.php:194-245`](file:///c:/laragon/www/masaar-erp-backend/app/Orchestrators/Sales/PostInvoiceOrchestrator.php)
-  — on posting a sales invoice, calls `$this->compliPayClient->submitInvoice($invoice)`
-  and stores `compliance_status`, `compliance_uuid`, `compliance_hash`,
-  `compliance_qr_code` back onto the ERP invoice.
-- Masaar exposes exactly that surface: [`routes/api/partner.php`](../routes/api/partner.php)
-  is documented as *"an ERP acting for its customer, over /v1"*
-  ([`routes/api.php:17`](../routes/api.php#L17)).
+### Who owns invoice issuance
 
-**masaar-erp-backend does NOT reimplement the cryptography.** Its `Services/Compliance/`
-holds only transport adapters — `ZatcaClientV1` is 46 lines and delegates to
-`CompliPayClient`; `ZatcaInvoiceTransformer` (159 L) just maps an ERP `Invoice`
-model to Masaar's JSON payload shape. There is no signer, no UBL builder, no
-hash chain in masaar-erp-backend. This is the correct division and it is real, not
-aspirational.
+**Both, at different layers — and this is the one genuine architectural
+overlap.**
 
-Two caveats worth naming:
-- masaar-erp-backend also contains `QatarGtaEInvoiceService.php` — a second, *local*
-  compliance path that bypasses Masaar. Overlap. See
-  [07-consolidation.md](07-consolidation.md).
-- masaar-erp-backend has its own `Services/Compliance/CircuitBreaker.php`, duplicating
-  Masaar's `Fatoora/Services/CircuitBreaker.php`. Two implementations of the
-  same idea in two repos.
+- `masaar-erp-backend` owns the *business* invoice.
+  `app/Orchestrators/Sales/PostInvoiceOrchestrator.php:94` calls
+  `handleZatcaSubmission()`, which at `:201` calls
+  `MasaarClient::submitInvoice($invoice)` and writes back
+  `compliance_status`, `compliance_uuid`, `compliance_hash`,
+  `compliance_qr_code`, `compliance_response` (`:204-209`).
+- **Masaar owns the compliance invoice** and everything ZATCA cares about:
+  UBL XML, ICV, PIH, hashing, XAdES, TLV QR, CSID, submission.
 
-### masaar-erp-frontend
+The ERP holds **no** cryptography and **no** UBL. `masaar-erp-backend`'s
+`app/Services/Compliance/ZatcaInvoiceTransformer.php` is a 159-line
+model→array mapper, and `ZatcaClientV1.php` is a 46-line adapter. That is the
+correct split. There is no duplicated crypto to delete.
 
-A pnpm/Turborepo monorepo — `apps/admin`, `apps/staff`, `apps/portal`, plus
-`packages/api-client`, `packages/types`, `packages/ui`. It is the **UI for
-masaar-erp-backend**, not for Masaar. Masaar ships its own server-rendered admin
-console and customer portal (`routes/web.php`, guarded by `platform.admin` and
-`portal.tenant`). masaar-erp-frontend carries no ZATCA logic.
+## Tenancy
 
-### Are these four separate products?
+**Multi-tenant, structurally enforced.** `org_id` is on every compliance table.
 
-Three repos, **two products**:
+- `database/migrations/0080_invoices.php:15` — `uuid('org_id')`, FK to
+  `organizations` with `cascadeOnDelete` (`:71`).
+- `app/Domains/Organization/Concerns/BelongsToTenant.php` + `TenantScope.php`
+  apply a global scope; models opt in via the trait
+  (e.g. `Fatoora/Models/ChainState.php:19`).
+- Verified, not just present: `tests/Feature/Security/TenantIsolationTest.php`
+  passes 7 cases including "missing tenant context yields no rows" and
+  "created records inherit the active tenant".
+- The hash chain is **per-organization**: `hash_chain_state` is keyed on
+  `org_id` as its primary key (`database/migrations/0160_hash_chain.php:21`),
+  with a comment at `Models/ChainState.php:14-16` explaining that a second row
+  would mean two competing chain heads.
 
-1. **Masaar** — a compliance API. Sellable on its own, to any ERP.
-2. **masaar-erp-backend + masaar-erp-frontend** — one ERP product, split backend/frontend.
-   masaar-erp-frontend is not independently meaningful.
+There is also a `branch_id` dimension (`0080_invoices.php:17`) for EGS-unit /
+per-branch modelling.
 
-Masaar's README describes an intended monorepo where `erp/` becomes a git
-submodule ([`README.md:23-35`](../README.md#L23-L35)). **That has not happened** —
-there is no submodule, no `erp/` directory inside Masaar, and the repos are
-independent working copies.
+## Where the compliance surface actually is
 
----
-
-## 3. Which repo owns invoice issuance
-
-**Split, and correctly so:**
-
-| Concern | Owner |
-|---|---|
-| Commercial invoice (pricing, customer, GL posting) | masaar-erp-backend |
-| Legal/tax invoice (UBL, ICV, PIH, signature, QR, submission) | **Masaar** |
-
-Masaar **does** issue invoices itself — it is not merely a signing library.
-It holds its own `invoices` + `invoice_lines` tables
-([`database/migrations/0080_invoices.php`](../database/migrations/0080_invoices.php)),
-allocates its own ICV, and has a direct-authoring API
-([`app/Domains/Invoice/Http/Controllers/InvoiceController.php:51`](../app/Domains/Invoice/Http/Controllers/InvoiceController.php#L51))
-alongside the partner/ERP path. `erp_reference_id` on the invoices table is the
-correlation key back to the ERP.
-
-This means a Masaar customer can either (a) use it as a compliance backend
-behind their own ERP, or (b) author invoices in it directly. Both paths exist
-in code.
-
----
-
-## 4. Single- or multi-tenant
-
-**Multi-tenant, structurally — and this is verified by a passing test.**
-
-- Tenant root: `organizations`
-  ([`0050_organizations.php`](../database/migrations/0050_organizations.php)),
-  with `organization_groups` above it
-  ([`0040_organization_groups.php`](../database/migrations/0040_organization_groups.php)).
-- Every compliance table carries `org_id` with a cascading FK — `invoices`
-  ([`0080_invoices.php:15`](../database/migrations/0080_invoices.php#L15)),
-  `hash_chain_state` and `hash_chain_history`
-  ([`0160_hash_chain.php:14,27`](../database/migrations/0160_hash_chain.php#L14)).
-- Enforcement is a global Eloquent scope, not per-query discipline:
-  `Organization/Concerns/BelongsToTenant.php` + `TenantScope.php`, applied on
-  `Invoice` ([`app/Domains/Invoice/Models/Invoice.php:29`](../app/Domains/Invoice/Models/Invoice.php#L29))
-  and `ChainState` ([`.../Models/ChainState.php:26`](../app/Domains/Compliance/Fatoora/Models/ChainState.php#L26)).
-- **VERIFIED:** `tests/Feature/Security/TenantIsolationTest.php` — 7 passing
-  assertions including *"missing tenant context yields no rows"* and *"created
-  records inherit the active tenant"*. Also `JwtCrossTenantTest`,
-  `ConsoleTenantScopeTest`, and an architecture test
-  (`RawTenantQueryTest`) that fails the build on raw unscoped SQL.
-
-Below the tenant sits `branches`
-([`0070_branches.php`](../database/migrations/0070_branches.php)) — Masaar's
-model of a **ZATCA EGS unit**. `Invoice::branch()` is documented as deciding
-which certificate signs
-([`app/Domains/Invoice/Models/Invoice.php:238-247`](../app/Domains/Invoice/Models/Invoice.php#L238-L247)),
-and there is a dedicated `BranchOnboardingController` (343 L). The hash chain,
-however, is keyed on `org_id` alone, not on branch — see
-[06-risks.md](06-risks.md), which flags this as a spec question.
-
-Alongside `organizations` sits `compliance_profiles`
-([`0060_compliance_profiles.php`](../database/migrations/0060_compliance_profiles.php)) —
-one per (tenant, jurisdiction), which is how one organization can hold both a
-ZATCA and an FTA registration. `MultiJurisdictionTest` and
-`MultiProfileRoutingTest` cover it.
-
----
-
-## 5. Where the compliance surface begins and ends
-
-Everything that could fail a ZATCA audit is inside these boundaries:
-
-| Boundary | Path |
-|---|---|
-| Entry (ERP) | `routes/api/partner.php` → `PipelineController` |
-| Entry (direct) | `routes/api/tenant.php` → `InvoiceController::store` |
-| Entry (onboarding) | `OnboardingController`, `BranchOnboardingController` |
-| Core | `app/Domains/Compliance/Fatoora/**` |
-| Chain state | `hash_chain_state`, `hash_chain_history`, `invoices.icv` |
-| Egress | `Fatoora/Client/FatooraClient.php` — **the only** outbound HTTP to ZATCA |
-| Async | `Jobs/ProcessFatooraSubmission`, `offline_queue`, `submissions` |
-| Operator | `app/Console/Commands/Fatoora*.php`, `VerifyHashChain`, `RotateCredentialKey`, `CheckCertificateExpiry` |
-
-A single egress class is a good property: there is exactly one place where a
-wrong URL, a missing TLS verification or a dropped retry could occur.
-
----
-
-## 6. One thing to know before reading further
-
-**The test suite cannot run with the default PHP on this machine.**
-`php -v` is 8.2.28; `composer.json` requires `^8.4`, so `php artisan test`
-aborts in `vendor/composer/platform_check.php` with exit code 0 — a **silent
-false pass**. Run under `C:\laragon\bin\php\php-8.4.12-nts-Win32-vs17-x64\php.exe`
-and the suite is green:
+Everything ZATCA touches lives under **`app/Domains/Compliance/Fatoora/`**
+(16,549 LOC). 23 services:
 
 ```
-Tests:  15 skipped, 715 passed (1640 assertions)
-Duration: 30.99s
+CertificateService   ChainRecorder      CircuitBreaker    ClearanceState
+Connectivity         CredentialStore    CsidOnboarding    DocumentBuilder
+DuplicateDetector    EcdsaSigner        InvoiceHasher     InvoiceValidator
+KillSwitch           OfflineFallback    OfflineQueue      QrCodeGenerator
+SubmissionGuard      SubmissionTracker  Submitter         TimestampValidator
+TlvEncoder           VatPeriodTracker   XadesSigner       XmlBuilder
 ```
 
-Every "VERIFIED" in this audit rests on that run. **Twelve of the fifteen skips
-are the conformance suite** — see [99-denied.md](99-denied.md) §1, which is the
-single largest bound on what this audit can claim.
+Plus `app/Domains/Invoice/` (the invoice model + ICV allocation) and
+`app/Domains/Pipeline/` (the ERP-facing intake path).
 
-A prior in-repo audit exists at [`docs/audit/`](../docs/audit/) (11 documents).
-Its claims were re-verified rather than repeated; where this audit disagrees, it
-says so. Its `09-WORK-MAP.md` reports 358 tests against the current 715, so it
-is materially out of date in the project's favour.
+## Verification status of this codebase
+
+**The test suite runs and is green**, which is the single most important fact
+for grading everything downstream:
+
+```
+PHP 8.4.12 · Tests: 727 passed, 24 skipped, 0 failed (1733 assertions) · 38.25s
+```
+
+Of the 24 skips, the important ones are the **conformance suite**:
+`tests/Feature/Compliance/ZatcaConformanceTest.php` runs ZATCA's own Java SDK
+over generated documents through four validators — XSD, EN16931, KSA
+Schematron and the PIH chain (`tests/Fixtures/ZatcaSdk.php:26`). It skips
+because `ZATCA_SDK_PATH` is unset. Commit `697ea28` records it being run and
+forcing fixes across XAdES signing, `DocumentBuilder` and `XmlBuilder`. This is
+an **external oracle**, and it is what carries the L2/L3 grading in
+`01-summary.md`.
+
+Caveat that matters: **the default `php` on this machine is 8.2.28**, which
+fails `composer`'s platform check (`^8.4`). The suite only runs when PHP 8.4.12
+is invoked explicitly from `c:/laragon/bin/php/php-8.4.12-nts-Win32-vs17-x64`.
+Anyone running `php artisan test` on this box gets a hard failure, not a
+test run. That is an environment trap, not a code defect.
+
+## Prior art in the repo
+
+`docs/audit/` contains a substantial earlier audit (10 documents, e.g.
+`09-WORK-MAP.md`, 369 lines, dated 2026-08-18). **This audit does not inherit
+its conclusions** — every finding below was re-derived from the tree. Where I
+agree with it I say so; where the tree has moved on, the tree wins.
