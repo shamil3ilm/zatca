@@ -213,31 +213,33 @@ class Submitter
             );
         }
 
-        $complianceData = $this->compliance->generateComplianceData(
-            invoice: $invoice,
-            organization: $organization,
-            // Passed explicitly: the parameter defaults to null and XmlBuilder
-            // reads a null as the genesis PIH, so omitting it makes every
-            // document claim to be the first in its chain.
-            previousInvoiceHash: $invoice->previous_invoice_hash,
-            privateKey: $credentials['privateKey'] ?? null,
-            certificate: $credentials['certificate'] ?? null,
-        );
+        // The document that was issued, not a new one.
+        //
+        // This used to call generateComplianceData() a second time and send
+        // that. Signing again produces a different XAdES SigningTime, so the
+        // bytes ZATCA saw were never the bytes on the invoice — and any input
+        // that had moved since issuance made them differ in ways that matter.
+        // The archive is the evidence of what was issued; if it does not match
+        // what the authority holds, it is evidence of something else.
+        //
+        // Issuance above guarantees both are present.
+        $invoiceXml = (string) $invoice->signed_xml;
+        $invoiceHash = (string) $invoice->hash;
 
         // Choose clearance (B2B) or reporting (B2C) based on invoice type
         if ($invoice->requiresClearance()) {
             // B2B: Submit for clearance (no deadline)
             $response = $this->client->clearInvoice(
-                invoiceXml: $complianceData['xml'],
-                invoiceHash: $complianceData['hash'],
+                invoiceXml: $invoiceXml,
+                invoiceHash: $invoiceHash,
                 uuid: $invoice->id,
             );
         } else {
             // B2C: Report invoice - ZATCA requires reporting within 24 hours
             $this->validateReportingDeadline($invoice);
             $response = $this->client->reportInvoice(
-                invoiceXml: $complianceData['xml'],
-                invoiceHash: $complianceData['hash'],
+                invoiceXml: $invoiceXml,
+                invoiceHash: $invoiceHash,
                 uuid: $invoice->id,
             );
         }

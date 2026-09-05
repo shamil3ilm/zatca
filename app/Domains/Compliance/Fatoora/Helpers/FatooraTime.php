@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domains\Compliance\Fatoora\Helpers;
 
+use Carbon\Carbon;
 use DateTimeImmutable;
 use DateTimeZone;
 
@@ -50,6 +51,24 @@ final class FatooraTime
      */
     public static function now(): DateTimeImmutable
     {
+        // Honour a frozen clock when one is set.
+        //
+        // This read the system clock directly, so travel() and freezeTime()
+        // did not reach it and nothing that depends on a ZATCA timestamp could
+        // be asserted on. The signature carries a SigningTime to the second,
+        // which meant a test could not tell a document signed once from one
+        // signed twice inside the same second — and the difference between
+        // those two is the whole of whether the archive matches what the
+        // authority received.
+        //
+        // Nothing changes outside tests: hasTestNow() is false in production.
+        if (Carbon::hasTestNow()) {
+            return Carbon::getTestNow()
+                ->copy()
+                ->setTimezone(self::ZATCA_TIMEZONE)
+                ->toDateTimeImmutable();
+        }
+
         return new DateTimeImmutable('now', new DateTimeZone(self::ZATCA_TIMEZONE));
     }
 

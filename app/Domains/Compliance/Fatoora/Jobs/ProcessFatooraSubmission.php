@@ -14,8 +14,6 @@ use App\Domains\Compliance\Fatoora\Exceptions\FatooraException;
 use App\Domains\Compliance\Fatoora\Models\InvoiceSubmission;
 use App\Domains\Compliance\Fatoora\Models\SubmissionIdempotency;
 use App\Domains\Compliance\Fatoora\Services\ClearanceState;
-use App\Domains\Compliance\Fatoora\Services\CredentialStore;
-use App\Domains\Compliance\Fatoora\Services\DocumentBuilder;
 use App\Domains\Compliance\Fatoora\Services\KillSwitch;
 use App\Domains\Compliance\Fatoora\Services\Submitter;
 use App\Domains\Licensing\Services\UsageMeteringService;
@@ -118,8 +116,6 @@ class ProcessFatooraSubmission implements ShouldQueue
      */
     public function handle(
         FatooraClient $zatcaClient,
-        DocumentBuilder $complianceService,
-        CredentialStore $credentials,
         KillSwitch $killSwitch,
         Submitter $submitter
     ): void {
@@ -166,24 +162,15 @@ class ProcessFatooraSubmission implements ShouldQueue
                 $submitter->generate($invoice, $organization);
                 $invoice->refresh();
             }
-            $signing = $credentials->get((string) $organization->id, $invoice->branch_id, CredentialStore::PCSID);
-
-            // Generate compliance data (XML, hash, etc.)
-            $complianceData = $complianceService->generateComplianceData(
-                invoice: $invoice,
-                organization: $organization,
-                previousInvoiceHash: $invoice->previous_invoice_hash,
-                // Signing material lives in CredentialStore, encrypted. These
-                // were $organization->zatca_private_key and ->zatca_certificate,
-                // which are neither columns nor accessors, so both were null and
-                // DocumentBuilder skipped signing altogether — this path put
-                // unsigned documents in front of ZATCA.
-                privateKey: $signing['privateKey'] ?? null,
-                certificate: $signing['pcsid'] ?? null,
-            );
-
-            $invoiceXml = $complianceData['xml'];
-            $invoiceHash = $complianceData['hash'];
+            // The document that was issued, not a new one.
+            //
+            // This built its own with DocumentBuilder, which made it the third
+            // place a document was produced and the only one that produced a
+            // different one each time it ran: signing again moves the XAdES
+            // SigningTime, so a retry sent bytes the archive had never held.
+            // Issuance is where a document is made; this is transport.
+            $invoiceXml = (string) $invoice->signed_xml;
+            $invoiceHash = (string) $invoice->hash;
             $invoiceUuid = $invoice->id;
 
             // Submit to ZATCA
