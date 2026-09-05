@@ -66,7 +66,7 @@ class ChainRecordTest extends TestCase
 
         $this->assertNotNull($entry, 'the issued document recorded no chain entry');
         $this->assertSame($invoice->fresh()->hash, $entry->invoice_hash);
-        $this->assertSame((int) $invoice->icv, (int) $entry->icv);
+        $this->assertSame((int) $invoice->fresh()->icv, (int) $entry->icv);
     }
 
     /**
@@ -111,7 +111,7 @@ class ChainRecordTest extends TestCase
 
         $this->assertNotNull($state, 'no chain head was recorded');
         $this->assertSame($second->id, $state->last_invoice_id);
-        $this->assertSame((int) $second->icv, (int) $state->last_icv);
+        $this->assertSame((int) $second->fresh()->icv, (int) $state->last_icv);
         $this->assertSame($second->fresh()->hash, $state->last_hash);
     }
 

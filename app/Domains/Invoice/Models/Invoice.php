@@ -45,6 +45,8 @@ class Invoice extends Model
         'exchange_rate',
         'buyer_name',
         'buyer_vat_number',
+        'buyer_id',
+        'buyer_id_scheme',
         'buyer_address',
         'payment_means_code',
         'billing_ref',
@@ -113,6 +115,8 @@ class Invoice extends Model
         'exchange_rate',
         'buyer_name',
         'buyer_vat_number',
+        'buyer_id',
+        'buyer_id_scheme',
         'buyer_address',
         'payment_means_code',
         'billing_ref',
@@ -151,12 +155,26 @@ class Invoice extends Model
     {
         parent::boot();
 
-        // Auto-generate ICV on creation
-        static::creating(function (Invoice $invoice) {
-            if ($invoice->icv === null && $invoice->org_id) {
-                $invoice->icv = static::generateNextIcv($invoice->org_id);
-            }
-        });
+        // ICV is not allocated here.
+        //
+        // It used to be, and that is what let the chain fork. The counter was
+        // taken when the row was created and the hash written later, at
+        // issuance, so the two moments could interleave. The PIH accessor
+        // skips anything unhashed, so a document issued while a lower-numbered
+        // draft was still unsigned chained straight past it — and when that
+        // draft was issued in turn, both named the same predecessor. Neither
+        // unique index catches that: they constrain (org_id, icv) and
+        // invoice_id, and two rows at different positions may share a
+        // previous_hash.
+        //
+        // Allocating at issuance instead makes the chain contiguous by
+        // construction. A draft carries no counter, so an abandoned one costs
+        // nothing and cannot block the tenant — which matters because there is
+        // no cancelled status to release a number with.
+        //
+        // Submitter::generate() allocates, under the same organization-row
+        // lock that reads the PIH, so the pair is decided together.
+        // ChainForkTest holds this.
 
         // Prevent deletion of finalized invoices
         static::deleting(function (Invoice $invoice) {
@@ -382,6 +400,15 @@ class Invoice extends Model
      */
     public function getPreviousInvoiceHashAttribute(): ?string
     {
+        // A draft holds no counter, so it holds no position, so it has no
+        // predecessor to name. Asking anyway used to reach the query builder
+        // as `where('icv', '<', null)`, which throws rather than returning
+        // nothing — and every path that reads this attribute speculatively
+        // died on it once the counter moved to issuance.
+        if ($this->icv === null) {
+            return null;
+        }
+
         return static::withoutTenantScope(fn (): ?string => static::query()
             ->where('org_id', $this->org_id)
             ->where('icv', '<', $this->icv)

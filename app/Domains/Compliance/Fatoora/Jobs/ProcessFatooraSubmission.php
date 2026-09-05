@@ -17,6 +17,7 @@ use App\Domains\Compliance\Fatoora\Services\ClearanceState;
 use App\Domains\Compliance\Fatoora\Services\CredentialStore;
 use App\Domains\Compliance\Fatoora\Services\DocumentBuilder;
 use App\Domains\Compliance\Fatoora\Services\KillSwitch;
+use App\Domains\Compliance\Fatoora\Services\Submitter;
 use App\Domains\Licensing\Services\UsageMeteringService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -119,7 +120,8 @@ class ProcessFatooraSubmission implements ShouldQueue
         FatooraClient $zatcaClient,
         DocumentBuilder $complianceService,
         CredentialStore $credentials,
-        KillSwitch $killSwitch
+        KillSwitch $killSwitch,
+        Submitter $submitter
     ): void {
         $submission = $this->submission->fresh();
 
@@ -150,6 +152,20 @@ class ProcessFatooraSubmission implements ShouldQueue
             // Load invoice and organization
             $invoice = $submission->invoice;
             $organization = $submission->org;
+
+            // Issue the document first if it has not been issued.
+            //
+            // This path builds its own document and never went through
+            // Submitter, so nothing here allocated a counter or fixed a
+            // predecessor: queued documents reached the authority carrying
+            // ICV 0 and the genesis PIH, each claiming to be first in its
+            // chain. Submitter::generate() is the one place that allocates,
+            // under the organization-row lock that also reads the
+            // predecessor, and it leaves an already-issued document alone.
+            if ($invoice->icv === null || $invoice->hash === null) {
+                $submitter->generate($invoice, $organization);
+                $invoice->refresh();
+            }
             $signing = $credentials->get((string) $organization->id, $invoice->branch_id, CredentialStore::PCSID);
 
             // Generate compliance data (XML, hash, etc.)

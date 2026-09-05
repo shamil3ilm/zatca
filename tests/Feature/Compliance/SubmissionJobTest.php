@@ -89,7 +89,9 @@ class SubmissionJobTest extends TestCase
     public function test_submitted_document_chains(): void
     {
         $first = $this->invoice('INV-1');
-        $first->forceFill(['hash' => 'PRIOR-HASH'])->save();
+        // An issued document holds a counter as well as a hash: the counter is what
+        // gives it a position for the next one to chain to.
+        $first->forceFill(['icv' => 1, 'hash' => 'PRIOR-HASH'])->save();
 
         $sent = $this->runJob($this->clearedResponse(), $this->invoice('INV-2'));
 

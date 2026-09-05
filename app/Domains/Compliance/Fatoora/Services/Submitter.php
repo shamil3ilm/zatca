@@ -65,24 +65,51 @@ class Submitter
         $this->killSwitch->assertNotEnabled(KillSwitch::SWITCH_ISSUANCE, (string) $organization->id);
         $this->killSwitch->assertNotEnabled(KillSwitch::SWITCH_SIGNING, (string) $organization->id);
 
-        $previousHash = $invoice->previous_invoice_hash;
-
         // Get signing credentials if available
         $credentials = $this->getSigningCredentials($organization->id);
 
-        $complianceData = $this->compliance->generateComplianceData(
-            invoice: $invoice,
-            organization: $organization,
-            previousInvoiceHash: $previousHash,
-            privateKey: $credentials['privateKey'] ?? null,
-            certificate: $credentials['certificate'] ?? null,
-        );
+        // Counter, predecessor, document and chain entry are decided together,
+        // inside one transaction holding the organization row.
+        //
+        // Reading the PIH outside this block is what let the chain fork: two
+        // issuances for one tenant both read the head before either wrote, and
+        // both claimed it. Allocating the counter here as well closes the
+        // other way in — a document issued ahead of a lower-numbered draft,
+        // which needs no concurrency at all to produce the same break.
+        //
+        // The lock is the organization row rather than the invoice rows, for
+        // the reason generateNextIcv() gives: there are no invoice rows to
+        // lock for a tenant's first document, so two requests would both find
+        // nothing and both allocate 1. The organization row always exists.
+        //
+        // Signing happens under that lock, which is the cost. It serialises
+        // issuance per tenant — correct, and worth measuring if a tenant ever
+        // issues fast enough to feel it. An advisory lock keyed on org_id
+        // would free the row without changing the guarantee.
+        $complianceData = DB::transaction(function () use ($invoice, $organization, $credentials): array {
+            DB::table('organizations')
+                ->where('id', $invoice->org_id)
+                ->lockForUpdate()
+                ->first();
 
-        // The document and its chain entry are written together: an invoice
-        // that exists without one is the break VerifyHashChain looks for, so
-        // it must not be possible to produce one by failing halfway.
-        DB::transaction(function () use ($invoice, $complianceData, $previousHash, $credentials): void {
+            // A draft carries no counter. Anything already numbered keeps its
+            // number, so re-issuing a document does not move it in the chain.
+            if ($invoice->icv === null) {
+                $invoice->icv = Invoice::generateNextIcv((string) $invoice->org_id);
+            }
+
+            $previousHash = $invoice->previous_invoice_hash;
+
+            $complianceData = $this->compliance->generateComplianceData(
+                invoice: $invoice,
+                organization: $organization,
+                previousInvoiceHash: $previousHash,
+                privateKey: $credentials['privateKey'] ?? null,
+                certificate: $credentials['certificate'] ?? null,
+            );
+
             $invoice->update([
+                'icv' => $invoice->icv,
                 'hash' => $complianceData['hash'],
                 'qr_code' => $complianceData['qr_code'],
                 'signed_xml' => $complianceData['signed_xml'] ?? null,
@@ -95,6 +122,8 @@ class Submitter
                 previousHash: $previousHash,
                 certificate: $credentials['certificate'] ?? null,
             );
+
+            return $complianceData;
         });
 
         return [
@@ -145,6 +174,21 @@ class Submitter
 
         // Validate environment before submission
         $this->validateEnvironment();
+
+        // Issuance is what allocates the counter and fixes the predecessor,
+        // and generate() is the only place that happens. A document submitted
+        // without having been issued used to reach the authority carrying
+        // ICV 0 and the genesis PIH, because this method builds its own
+        // document and nothing here had assigned either.
+        //
+        // Calling it here rather than throwing keeps the direct submit path
+        // working for callers that never asked for a separate issuance step.
+        // Already-issued documents are left alone: generate() keeps a counter
+        // it finds, so this does not move anything in the chain.
+        if ($invoice->icv === null || $invoice->hash === null) {
+            $this->generate($invoice, $organization);
+            $invoice->refresh();
+        }
 
         // A branch signs with its own credentials; an invoice that names no
         // branch signs with the organization's. invoices.branch_id is nullable

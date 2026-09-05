@@ -16,6 +16,12 @@ use Tests\TestCase;
  * ICV is the ZATCA invoice counter. It must be strictly sequential per
  * taxpayer, and the previous-invoice-hash chain is built on it, so a
  * duplicate or a gap is a compliance failure rather than a cosmetic one.
+ *
+ * The counter is taken at issuance, not at creation — Submitter::generate()
+ * allocates it under the organization-row lock that also reads the
+ * predecessor, so the two are decided together and a draft holds no position
+ * in the chain. These tests drive the allocator the way issuance does.
+ * ChainForkTest covers what that ordering buys.
  */
 class IcvAllocationTest extends TestCase
 {
@@ -23,9 +29,19 @@ class IcvAllocationTest extends TestCase
 
     public function test_first_icv_is_one(): void
     {
-        $invoice = $this->makeInvoice($this->makeOrganization()->id, 'INV-1');
+        $invoice = $this->issue($this->makeOrganization()->id, 'INV-1');
 
         $this->assertSame(1, $invoice->icv);
+    }
+
+    /**
+     * Creation alone takes no counter. A draft is not in the chain.
+     */
+    public function test_draft_has_no_icv(): void
+    {
+        $invoice = $this->makeInvoice($this->makeOrganization()->id, 'DRAFT-1');
+
+        $this->assertNull($invoice->icv);
     }
 
     public function test_icv_increments(): void
@@ -33,7 +49,7 @@ class IcvAllocationTest extends TestCase
         $organizationId = $this->makeOrganization()->id;
 
         $icvs = collect(range(1, 5))
-            ->map(fn (int $n) => $this->makeInvoice($organizationId, "INV-{$n}")->icv)
+            ->map(fn (int $n) => $this->issue($organizationId, "INV-{$n}")->icv)
             ->all();
 
         $this->assertSame([1, 2, 3, 4, 5], $icvs);
@@ -48,12 +64,12 @@ class IcvAllocationTest extends TestCase
         $first = $this->makeOrganization('First Co')->id;
         $second = $this->makeOrganization('Second Co')->id;
 
-        $this->makeInvoice($first, 'A-1');
-        $this->makeInvoice($first, 'A-2');
-        $freshOrgInvoice = $this->makeInvoice($second, 'B-1');
+        $this->issue($first, 'A-1');
+        $this->issue($first, 'A-2');
+        $freshOrgInvoice = $this->issue($second, 'B-1');
 
         $this->assertSame(1, $freshOrgInvoice->icv);
-        $this->assertSame(3, $this->makeInvoice($first, 'A-3')->icv);
+        $this->assertSame(3, $this->issue($first, 'A-3')->icv);
     }
 
     public function test_explicit_icv_kept(): void
@@ -76,7 +92,7 @@ class IcvAllocationTest extends TestCase
         }
 
         $organizationId = $this->makeOrganization()->id;
-        $this->makeInvoice($organizationId, 'INV-1');
+        $this->issue($organizationId, 'INV-1');
 
         $this->expectException(QueryException::class);
 
@@ -92,6 +108,16 @@ class IcvAllocationTest extends TestCase
     private function makeOrganization(string $name = 'Acme'): Organization
     {
         return Organization::create(['name' => $name, 'country' => 'SA']);
+    }
+
+    /**
+     * Create and number a document, the way issuance does.
+     */
+    private function issue(string $organizationId, string $number): Invoice
+    {
+        return $this->makeInvoice($organizationId, $number, [
+            'icv' => Invoice::generateNextIcv($organizationId),
+        ]);
     }
 
     private function makeInvoice(string $organizationId, string $number, array $overrides = []): Invoice

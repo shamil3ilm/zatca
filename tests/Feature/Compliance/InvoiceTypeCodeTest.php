@@ -117,7 +117,10 @@ class InvoiceTypeCodeTest extends TestCase
      */
     public function test_icv_reaches_the_document(): void
     {
-        $invoice = $this->draft([]);
+        // Numbered explicitly: the counter is taken at issuance, and this
+        // builds a document straight from DocumentBuilder without going
+        // through it. An unnumbered draft has no position to carry.
+        $invoice = $this->draft(['icv' => 7]);
         $xpath = $this->xpathFor(app(DocumentBuilder::class)->generateComplianceData(
             invoice: $invoice,
             organization: $this->organization,
@@ -128,7 +131,7 @@ class InvoiceTypeCodeTest extends TestCase
         $nodes = $xpath->query("//cac:AdditionalDocumentReference[cbc:ID='ICV']/cbc:UUID");
 
         $this->assertGreaterThan(0, $nodes->length, 'The document carries no ICV.');
-        $this->assertSame((string) $invoice->icv, trim($nodes->item(0)->textContent));
+        $this->assertSame((string) $invoice->fresh()->icv, trim($nodes->item(0)->textContent));
     }
 
     /**
