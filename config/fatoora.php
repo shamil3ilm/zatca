@@ -283,15 +283,21 @@ return [
     */
     'validation' => [
         // Where the ZATCA UBL 2.1 schema set is installed, relative to the
-        // project root or absolute. ZATCA publishes it with their SDK, which is
-        // a licensed download and cannot live in this repository, so with
-        // nothing here InvoiceValidator checks that a document is well formed
-        // and says so rather than implying it checked more.
+        // project root or absolute. It ships inside ZATCA's SDK, a licensed
+        // download that cannot live in this repository, so with nothing here
+        // InvoiceValidator checks that a document is well formed and says so
+        // rather than implying it checked more.
         //
-        // Point it at the main document, e.g.
-        // resources/zatca/xsd/maindoc/UBL-Invoice-2.1.xsd, and keep the whole
-        // tree: that file imports the common component schemas beside it.
-        'schema_path' => env('ZATCA_SCHEMA_PATH'),
+        // Setting ZATCA_SDK_PATH is enough: the schema sits at a fixed place
+        // inside the SDK, and that variable already has to be set for CSR
+        // generation. ZATCA_SCHEMA_PATH overrides it for a schema kept
+        // somewhere else. Point that at the main document and keep the tree
+        // around it — the file imports the common components beside it.
+        'schema_path' => env('ZATCA_SCHEMA_PATH') ?: (
+            env('ZATCA_SDK_PATH')
+                ? rtrim((string) env('ZATCA_SDK_PATH'), '/\\').'/Data/Schemas/xsds/UBL2.1/xsd/maindoc/UBL-Invoice-2.1.xsd'
+                : null
+        ),
 
         // Allowed VAT rates in Saudi Arabia (percentage values)
         'allowed_tax_rates' => [0, 15],

@@ -528,6 +528,12 @@ class InvoiceValidator
      * every caller can see which of the two checks it got, instead of reading
      * an empty error list as a document that satisfies the specification.
      *
+     * Give it a signed document. Before signing, XmlBuilder leaves a comment
+     * where the XAdES signature goes, and the schema wants an element there,
+     * so an unsigned document always reports one error against
+     * ext:ExtensionContent however correct the rest of it is. With the
+     * signature in place both invoice types validate clean.
+     *
      * @return array{schema_checked: bool, errors: list<string>}
      */
     public function validateXml(string $xml): array

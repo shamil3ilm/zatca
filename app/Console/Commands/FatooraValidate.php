@@ -162,14 +162,18 @@ class FatooraValidate extends Command
 
         // Display next steps
         $this->newLine();
-        $this->info('Next Steps for ZATCA SDK Validation:');
-        $this->line('1. Navigate to your ZATCA SDK folder');
-        $this->line('2. Run: fatoora -validate -invoice '.$outputPath);
-        $this->line('3. Expected result: GLOBALVALIDATIONRESULT = PASSED');
-        $this->newLine();
+        $sdk = getenv('ZATCA_SDK_PATH') ?: null;
 
-        $this->info('SDK Location (if installed):');
-        $this->line('  C:\\Users\\<user>\\Downloads\\zatca-einvoicing-sdk-Java-238-R3.4.8\\');
+        if ($sdk === null) {
+            $this->info('To check this against the ZATCA validator:');
+            $this->line('  Set ZATCA_SDK_PATH to the unpacked SDK (the directory holding Apps/ and Data/),');
+            $this->line('  then run: fatoora -validate -invoice '.$outputPath);
+            $this->line('  It also turns on the conformance suite, which skips without it.');
+        } else {
+            $this->info('Check it against the ZATCA validator:');
+            $this->line('  '.rtrim(str_replace('\\', '/', $sdk), '/').'/Apps/fatoora -validate -invoice '.$outputPath);
+            $this->line('  Expected: GLOBALVALIDATIONRESULT = PASSED');
+        }
 
         return Command::SUCCESS;
     }
