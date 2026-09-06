@@ -268,8 +268,11 @@ Resolution Path:
 
 ```env
 # Enable Timestamp Authority for XAdES-T
-ZATCA_USE_TSA=true
+ZATCA_TSA_ENABLED=true
 ZATCA_TSA_URL=https://tsa.zatca.gov.sa/timestamp
+ZATCA_TSA_USERNAME=
+ZATCA_TSA_PASSWORD=
+ZATCA_TSA_TIMEOUT=30
 ```
 
 ---

@@ -342,12 +342,16 @@ docker-compose exec app php artisan queue:failed
 #### ZATCA API Errors
 
 ```bash
-# Test ZATCA connectivity
-docker-compose exec app php artisan zatca:test-connection
-
-# Check environment
+# Test ZATCA connectivity. There is no artisan command for this — the check
+# lives in the Connectivity service, and the admin dashboard exposes it at
+# GET /api/admin/dashboard/connectivity.
 docker-compose exec app php artisan tinker
->>> config('zatca.environment')
+>>> app(App\Domains\Compliance\Fatoora\Services\Connectivity::class)->getDetailedStatus()
+
+# Check environment. The config file is fatoora.php, not zatca.php, so
+# config('zatca.environment') returns null rather than an answer.
+docker-compose exec app php artisan tinker
+>>> config('fatoora.environment')
 ```
 
 ### Log Locations

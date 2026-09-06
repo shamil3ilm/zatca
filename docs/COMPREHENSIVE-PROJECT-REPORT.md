@@ -628,12 +628,14 @@ ZATCA_RATE_LIMIT_PER_DAY=10000
 ZATCA_MAX_CONCURRENT=10
 
 # Circuit Breaker
-ZATCA_CB_THRESHOLD=5
-ZATCA_CB_TIMEOUT=60
+ZATCA_CCB_FAILURE_THRESHOLD=5
+ZATCA_CCB_TIMEOUT=60
+ZATCA_CCB_SUCCESS_THRESHOLD=2
+ZATCA_CCB_HALF_OPEN_REQUESTS=3
 
-# Timestamp Validation
-ZATCA_MAX_DRIFT_SECONDS=30
-ZATCA_ENFORCE_TIMESTAMP_VALIDATION=true
+# Timestamp validation has no settings. The tolerance is
+# TimestampValidator::MAX_DRIFT_SECONDS, a constant of 30, and the check always
+# runs — there is nothing to enable.
 
 # Hash Chain Monitoring
 ZATCA_HASH_CHAIN_P95_WARNING=50

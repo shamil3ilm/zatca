@@ -58,6 +58,8 @@ export interface InvoiceStoreBody {
   payment_means_code?: string;
   buyer_name: string;
   buyer_vat_number?: string;
+  buyer_id?: string;
+  buyer_id_scheme?: string;
   buyer_address?: unknown[];
   billing_ref?: string;
   adjustment_reason?: string;
@@ -77,6 +79,8 @@ export interface InvoiceUpdateBody {
   payment_means_code?: string;
   buyer_name: string;
   buyer_vat_number?: string;
+  buyer_id?: string;
+  buyer_id_scheme?: string;
   buyer_address?: unknown[];
   billing_ref?: string;
   adjustment_reason?: string;
@@ -96,6 +100,8 @@ export interface InvoiceUpdateBody {
   payment_means_code?: string;
   buyer_name: string;
   buyer_vat_number?: string;
+  buyer_id?: string;
+  buyer_id_scheme?: string;
   buyer_address?: unknown[];
   billing_ref?: string;
   adjustment_reason?: string;
@@ -115,6 +121,8 @@ export interface V1InvoiceControllerBody {
   payment_means_code?: string;
   buyer_name: string;
   buyer_vat_number?: string;
+  buyer_id?: string;
+  buyer_id_scheme?: string;
   buyer_address?: unknown[];
   billing_ref?: string;
   adjustment_reason?: string;
@@ -134,6 +142,8 @@ export interface V1InvoiceControllerBody {
   payment_means_code?: string;
   buyer_name: string;
   buyer_vat_number?: string;
+  buyer_id?: string;
+  buyer_id_scheme?: string;
   buyer_address?: unknown[];
   billing_ref?: string;
   adjustment_reason?: string;
@@ -153,6 +163,8 @@ export interface V1PipelineControllerBody {
   payment_means_code?: string;
   buyer_name: string;
   buyer_vat_number?: string;
+  buyer_id?: string;
+  buyer_id_scheme?: string;
   buyer_address?: unknown[];
   billing_ref?: string;
   adjustment_reason?: string;

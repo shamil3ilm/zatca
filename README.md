@@ -21,11 +21,16 @@ A multi-jurisdiction e-invoicing compliance API platform for GCC businesses.
 > the signature was computed over an empty string, certificate requests could not
 > be generated, and every tax subtotal declared a base that included its own tax.
 >
-> Still outstanding: validation against ZATCA's published conformance fixtures —
-> which is what settles the encodings a self-consistency check cannot — and
-> signing keys are not yet held in a managed KMS.
-> See [`docs/audit/09-WORK-MAP.md`](docs/audit/09-WORK-MAP.md) for the current
-> gap list before deploying to production.
+> Documents are now checked against ZATCA's own validator rather than against
+> our reading of it — see [Conformance](#conformance) below. That check found
+> nine defects the internal suite could not, because none of those tests knew
+> what the authority requires.
+>
+> Still outstanding: signing keys are not yet held in a managed KMS, and a live
+> submission has not been made — the conformance run uses a self-signed
+> certificate, so the certificate, QR and PIH checks it performs are not
+> exercised. See [`docs/audit/09-WORK-MAP.md`](docs/audit/09-WORK-MAP.md) for
+> the current gap list before deploying to production.
 
 ## Repository Structure
 
@@ -64,6 +69,83 @@ Run the test suite:
 ```bash
 php artisan test
 ```
+
+## Conformance
+
+The test suite checks that the code does what the code intends. That is worth
+having and it is not compliance: it cannot tell you that BT-23 must read
+`reporting:1.0`, because nothing in this repository knew. ZATCA's own Java SDK
+knows, and `ZatcaConformanceTest` runs it over documents this platform
+generates — the UBL 2.1 schema, the CEN EN 16931 rules, ZATCA's Schematron, and
+the PIH check.
+
+The SDK is a licensed download that cannot be committed, so these tests skip
+unless you point at one:
+
+```bash
+ZATCA_SDK_PATH=/path/to/zatca-einvoicing-sdk-Java-238-R3.4.8 php artisan test
+```
+
+Point it at the directory holding `Apps/` and `Data/`. Java 17+ must be on the
+PATH. Without it the suite still runs; the conformance tests report as skipped,
+which is why CI is unaffected.
+
+What it covers: the six documents ZATCA's compliance check requires (standard
+and simplified — invoice, credit note, debit note), all five BT-3 sub-type
+flags, zero-rated, exempt and out-of-scope lines, a healthcare supply billed to
+a citizen, foreign currency, a document-level discount, and a discount spread
+across two tax categories. One test validates ZATCA's own sample invoice, so a
+broken harness reports itself as broken rather than as a broken invoice.
+
+Two things about the SDK itself, both of which cost an afternoon:
+
+- It reads `SDK_CONFIG` and `FATOORA_HOME`. Without `SDK_CONFIG` it dies in
+  `Config.readResourcesPaths` with a NullPointerException that reads like a
+  malformed invoice and is not. The test sets both per-process.
+- **Do not run its `install.bat`.** It executes `SETX PATH ""` and then rebuilds
+  PATH from `%PATH%`, which truncates at 1024 characters and can destroy a
+  Windows PATH. Nothing needs it; the two variables above are the whole setup.
+- Moving the SDK after installing it leaves absolute paths in
+  `Configuration/config.json` pointing at the old location. Repoint them or the
+  validator fails on every document.
+
+What the conformance run does **not** establish: it signs with a self-signed
+certificate, so the SDK's certificate, QR-signature and PIH-chain checks cannot
+pass and are excluded. Those need a real CSID from the Fatoora portal.
+
+## Scheduled Tasks
+
+One cron entry drives all of them:
+
+```
+* * * * * cd /path/to/app && php artisan schedule:run >> /dev/null 2>&1
+```
+
+`php artisan schedule:list` prints the live schedule, which is the only thing
+that cannot drift. What it currently registers:
+
+| When | Task |
+|------|------|
+| Every 5 min | `fatoora:process-offline --limit=50` — drain the offline queue |
+| Every 15 min | `compliance:index-health --alert` |
+| Hourly | `license:cleanup-rate-limits` |
+| Hourly | `license:report-usage` |
+| Daily 00:00 | `license:check-expiration` |
+| Daily 04:00 | `compliance:cleanup-offline-queue` |
+| Daily 08:00 | `fatoora:check-certificate --notify` |
+| Weekly Sun 02:00 | `fatoora:verify-hash-chain` |
+| Monthly 1st 03:00 | `compliance:partition-maintenance --create-future --months-ahead=2` |
+
+Run once when connecting a taxpayer, not scheduled:
+
+```bash
+php artisan fatoora:onboard --step=full --otp=<otp> --target=simulation
+```
+
+The remaining commands are operator tools rather than scheduled work:
+`fatoora:generate-csr`, `fatoora:validate`, `fatoora:sandbox-test`,
+`license:generate`, `license:status`, `masaar:openapi`, `masaar:sdk-types` and
+`masaar:rotate-credential-key`.
 
 ## Documentation
 

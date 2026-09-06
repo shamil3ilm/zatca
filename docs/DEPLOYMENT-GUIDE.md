@@ -350,10 +350,16 @@ chronyc tracking | grep "System time"
 
 ### Monitor Clock Drift
 
-Add to Laravel scheduler (`app/Console/Kernel.php`):
+The platform already refuses an invoice whose timestamp is more than 30 seconds
+out — `TimestampValidator::MAX_DRIFT_SECONDS`, a constant rather than a setting,
+so there is no environment variable to tune it. What follows is host-level
+monitoring, which tells you before invoices start being refused.
+
+Add to the scheduler in `routes/console.php` — this application is Laravel 12
+and has no `app/Console/Kernel.php`:
 
 ```php
-$schedule->call(function () {
+Schedule::call(function () {
     $drift = shell_exec("chronyc tracking | grep 'System time' | awk '{print $4}'");
     $driftSeconds = abs((float) $drift);
 
@@ -549,33 +555,34 @@ AWS_USE_PATH_STYLE_ENDPOINT=false
 #--------------------------------------------
 # ZATCA Configuration
 #--------------------------------------------
+# The endpoint follows from the environment — config/fatoora.php holds one URL
+# per environment under 'endpoints', so there is no separate API URL to set.
 ZATCA_ENVIRONMENT=production
-ZATCA_API_URL=https://gw-fatoora.zatca.gov.sa
 
-# Time sync enforcement
-ZATCA_ENFORCE_UTC=true
-ZATCA_MONITOR_CLOCK_DRIFT=true
-ZATCA_MAX_CLOCK_DRIFT_WARNING=1
-ZATCA_MAX_CLOCK_DRIFT_CRITICAL=5
-
-# Database isolation verification
-ZATCA_VERIFY_DB_ISOLATION=true
-ZATCA_BLOCK_INVALID_ISOLATION=true
+# TLS verification. Defaults to true; the only reason to set it is to turn it
+# off, which you should not do against production.
+ZATCA_SSL_VERIFY=true
 
 # Certificate notifications
 ZATCA_CERT_NOTIFICATIONS_ENABLED=true
 ZATCA_CERT_NOTIFY_CHANNELS=mail,webhook
+ZATCA_CERT_WARNING_DAYS=30
+ZATCA_CERT_CRITICAL_DAYS=7
 
-# Evidence export
-ZATCA_EVIDENCE_EXPORT_ENABLED=true
+# Credential encryption at rest
+ZATCA_CREDENTIAL_DISK=local
+ZATCA_CREDENTIAL_KEY=
+ZATCA_CREDENTIAL_PREVIOUS_KEYS=
 
 #--------------------------------------------
 # Queue Configuration
 #--------------------------------------------
-ZATCA_QUEUE_SUBMISSIONS=zatca-submissions
+# Null means the application's own QUEUE_CONNECTION.
+ZATCA_QUEUE_CONNECTION=
+ZATCA_QUEUE_NAME=zatca-submissions
 ZATCA_QUEUE_WEBHOOKS=webhooks
-ZATCA_QUEUE_MAX_ATTEMPTS=3
-ZATCA_QUEUE_JOB_TIMEOUT=120
+ZATCA_QUEUE_TRIES=3
+ZATCA_QUEUE_TIMEOUT=120
 
 #--------------------------------------------
 # Logging
@@ -796,7 +803,7 @@ echo "  Restore time: ${RESTORE_TIME}s"
 # 5. Verify hash chain integrity
 echo "Step 5: Verifying hash chain integrity..."
 # This should be a dedicated artisan command
-php artisan zatca:verify-hash-chain --database=masaar_dr_test
+php artisan fatoora:verify-hash-chain --database=masaar_dr_test
 
 # 6. Compare counts
 echo "Step 6: Comparing invoice counts..."
@@ -833,7 +840,7 @@ use Illuminate\Support\Facades\DB;
 
 class VerifyHashChain extends Command
 {
-    protected $signature = 'zatca:verify-hash-chain {--database=}';
+    protected $signature = 'fatoora:verify-hash-chain {--database=}';
     protected $description = 'Verify PIH (Previous Invoice Hash) chain integrity';
 
     public function handle(): int
@@ -933,10 +940,10 @@ php artisan queue:failed
 php artisan queue:retry all
 
 # Check certificate expiry
-php artisan zatca:check-certificate
+php artisan fatoora:check-certificate
 
 # Verify hash chain
-php artisan zatca:verify-hash-chain
+php artisan fatoora:verify-hash-chain
 ```
 
 ### Emergency Procedures
@@ -960,7 +967,7 @@ sudo supervisorctl stop all
 pg_restore -U masaar -d masaar_prod backup.dump
 
 # Verify hash chain
-php artisan zatca:verify-hash-chain
+php artisan fatoora:verify-hash-chain
 
 # Resume workers
 sudo supervisorctl start all

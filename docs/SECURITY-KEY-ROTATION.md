@@ -219,34 +219,34 @@ In case of suspected key compromise:
 
 ### 7.1 Automated Monitoring
 
+Certificate expiry monitoring is a command, and it is already scheduled in
+`routes/console.php`:
+
 ```php
-// Scheduled task for credential monitoring
-// Add to app/Console/Kernel.php
-
-$schedule->call(function () {
-    // Check ZATCA certificate expiry
-    $orgs = Organization::whereHas('zatcaCertificate')->get();
-
-    foreach ($orgs as $org) {
-        $cert = $org->zatcaCertificate;
-        $daysRemaining = now()->diffInDays($cert->expires_at, false);
-
-        if ($daysRemaining <= 30 && $daysRemaining > 0) {
-            Notification::send(
-                $org->admins,
-                new CertificateExpiringNotification($cert, $daysRemaining)
-            );
-        }
-    }
-
-    // Check API key expiry
-    ApiKey::where('expires_at', '<=', now()->addDays(14))
-        ->where('revoked_at', null)
-        ->each(fn ($key) => $key->organization->notify(
-            new ApiKeyExpiringNotification($key)
-        ));
-})->daily();
+Schedule::command('fatoora:check-certificate --notify')
+    ->dailyAt('08:00')
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/zatca-certificate.log'));
 ```
+
+Run it by hand to see the current state:
+
+```bash
+php artisan fatoora:check-certificate                    # all organizations
+php artisan fatoora:check-certificate --organization=ID  # one
+php artisan fatoora:check-certificate --notify           # and send notifications
+```
+
+Thresholds come from `ZATCA_CERT_WARNING_DAYS` (default 30) and
+`ZATCA_CERT_CRITICAL_DAYS` (default 7); channels from
+`ZATCA_CERT_NOTIFY_CHANNELS`.
+
+This section previously carried a closure to paste into
+`app/Console/Kernel.php`. That file does not exist — the application is Laravel
+12 and schedules in `routes/console.php` — and the closure read
+`Organization::whereHas('zatcaCertificate')`, a relation the model does not
+have. Certificates live in `CredentialStore`, encrypted on disk, which is why
+reading them is a command rather than a query.
 
 ### 7.2 Audit Logging
 

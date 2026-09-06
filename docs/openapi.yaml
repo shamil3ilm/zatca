@@ -1519,6 +1519,10 @@ paths:
                   type: string
                 buyer_vat_number:
                   type: string
+                buyer_id:
+                  type: string
+                buyer_id_scheme:
+                  type: string
                 buyer_address:
                   type: array
                 billing_ref:
@@ -1627,6 +1631,10 @@ paths:
                   type: string
                 buyer_vat_number:
                   type: string
+                buyer_id:
+                  type: string
+                buyer_id_scheme:
+                  type: string
                 buyer_address:
                   type: array
                 billing_ref:
@@ -1705,6 +1713,10 @@ paths:
                 buyer_name:
                   type: string
                 buyer_vat_number:
+                  type: string
+                buyer_id:
+                  type: string
+                buyer_id_scheme:
                   type: string
                 buyer_address:
                   type: array
@@ -2777,6 +2789,10 @@ paths:
                   type: string
                 buyer_vat_number:
                   type: string
+                buyer_id:
+                  type: string
+                buyer_id_scheme:
+                  type: string
                 buyer_address:
                   type: array
                 billing_ref:
@@ -2886,6 +2902,10 @@ paths:
                 buyer_name:
                   type: string
                 buyer_vat_number:
+                  type: string
+                buyer_id:
+                  type: string
+                buyer_id_scheme:
                   type: string
                 buyer_address:
                   type: array
@@ -3019,6 +3039,10 @@ paths:
                 buyer_name:
                   type: string
                 buyer_vat_number:
+                  type: string
+                buyer_id:
+                  type: string
+                buyer_id_scheme:
                   type: string
                 buyer_address:
                   type: array
