@@ -59,8 +59,14 @@ class ExemptLineTest extends TestCase
         return [
             'healthcare is zero-rated' => ['VATEX-SA-HEA', 'Z'],
             'education is zero-rated' => ['VATEX-SA-EDU', 'Z'],
-            'export is out of scope' => ['VATEX-SA-OOS-2', 'O'],
-            'services to non-GCC are out of scope' => ['VATEX-SA-OOS-1', 'O'],
+            // VATEX-SA-OOS-1 and -OOS-2 used to stand here for services to
+            // non-GCC customers and exported goods. Neither is a code ZATCA
+            // recognises — BR-KSA-CL-04 lists VATEX-SA-OOS alone — so the
+            // request no longer accepts them and an invoice carrying one could
+            // never have been filed. Export is billed under VATEX-SA-34-3,
+            // which is zero-rated rather than out of scope.
+            'out of scope' => ['VATEX-SA-OOS', 'O'],
+            'exported goods are zero-rated' => ['VATEX-SA-34-3', 'E'],
             'financial services are exempt' => ['VATEX-SA-33', 'E'],
             'qualifying metals are exempt' => ['VATEX-SA-36', 'E'],
         ];

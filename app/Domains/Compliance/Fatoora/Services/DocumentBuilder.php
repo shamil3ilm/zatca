@@ -218,6 +218,14 @@ class DocumentBuilder
             supplyDate: $invoice->supply_date?->format('Y-m-d'),
             sellerCrNumber: $organization->cr_number,
             buyerVatNumber: $invoice->buyer_vat_number,
+            // BT-46 and BT-46-1. XmlBuilder has always emitted these, and
+            // InvoiceXmlData has always carried them, and nothing ever set
+            // them — so buyerHasAlternativeId() was false for every invoice
+            // and no buyer without a VAT number could be identified at all.
+            // BR-KSA-49 needs a NAT identifier on healthcare and education
+            // supplies, which made those unfileable.
+            buyerId: $invoice->buyer_id,
+            buyerIdScheme: $invoice->buyer_id_scheme,
             buyerAddress: $invoice->buyer_address ? AddressData::fromArray($invoice->buyer_address) : null,
             discount: (float) ($invoice->discount_amount ?? 0),
             paymentMeansCode: $invoice->payment_means_code ?? '10',

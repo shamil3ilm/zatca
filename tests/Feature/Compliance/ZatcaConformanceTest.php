@@ -153,6 +153,193 @@ class ZatcaConformanceTest extends TestCase
     }
 
     /**
+     * Lines that are not standard-rated.
+     *
+     * ZATCA ships a sample for each of these, and each carries its own rules:
+     * an exempt or zero-rated line must name the reason it is not taxed, and
+     * the totals still have to add up with a zero in them. The tax path had
+     * already been wrong twice here — a line's amount-with-VAT declared as
+     * zero, and exempt lines filed as standard-rated — so these are the shapes
+     * most worth putting in front of the authority.
+     *
+     * @return iterable<string, array{string, string, float}>
+     */
+    public static function taxCategories(): iterable
+    {
+        // Exported goods rather than healthcare: BR-KSA-49 requires a buyer
+        // national ID (BT-46 with schemeID NAT) alongside VATEX-SA-HEA or
+        // VATEX-SA-EDU, and the invoice has nowhere to put one. That is a real
+        // limit on which zero-rated supplies this platform can bill for, and
+        // it is a schema question rather than something to paper over here.
+        yield 'zero rated' => ['Z', 'VATEX-SA-34-3', 0.0];
+
+        // The code ZATCA's own exempt sample carries.
+        yield 'exempt' => ['E', 'VATEX-SA-29-7', 0.0];
+
+        yield 'out of scope' => ['O', 'VATEX-SA-OOS', 0.0];
+    }
+
+    /**
+     * A healthcare supply billed to a citizen, which is the shape BR-KSA-49
+     * governs and the platform could not produce.
+     *
+     * The rule makes BT-46 mandatory with schemeID NAT whenever the exemption
+     * is VATEX-SA-HEA or VATEX-SA-EDU. Private healthcare and private
+     * education to citizens are among the most common zero-rated supplies in
+     * the Kingdom, so "cannot be filed" was not a corner.
+     */
+    public function test_healthcare_to_a_citizen_validates(): void
+    {
+        $result = $this->validate($this->signed('standard', 'invoice', [], [
+            'category' => 'Z',
+            'code' => 'VATEX-SA-HEA',
+            'rate' => 0.0,
+            'buyer_id' => '2345678901',
+            'buyer_id_scheme' => 'NAT',
+        ]));
+
+        $this->assertSame(
+            [],
+            $this->businessRules($result['errors']),
+            'ZATCA rejected a healthcare supply billed to a citizen.'
+        );
+    }
+
+    /**
+     * A foreign-currency invoice, which ZATCA reads in two currencies at once.
+     *
+     * BR-KSA-CU-01: VAT is reported in SAR whatever the invoice is billed in,
+     * so the document carries the total twice — once in its own currency and
+     * once converted. The exchange_rate column that makes the conversion
+     * possible was added recently, and InvoiceValidator had been demanding a
+     * field nothing accepted or stored, so every non-SAR invoice was refused
+     * at compliance with an error naming something the caller could not send.
+     * Nothing had put the result in front of the authority.
+     */
+    public function test_foreign_currency_validates(): void
+    {
+        $result = $this->validate($this->signed('standard', 'invoice', [], null, [
+            'currency' => 'USD',
+            'exchange_rate' => '3.750000',
+        ]));
+
+        $this->assertSame(
+            [],
+            $this->businessRules($result['errors']),
+            'ZATCA rejected a foreign-currency invoice.'
+        );
+
+        $this->assertSame([], $result['warnings'], 'an advisory fired on a foreign-currency invoice.');
+    }
+
+    /**
+     * A discount on the whole invoice, which has to reduce the tax it is
+     * meant to reduce.
+     *
+     * The apportionment across tax categories was reworked recently and the
+     * line amount-with-VAT was wrong before that. Both are arithmetic ZATCA
+     * checks first, so this is the shape most worth re-asking about.
+     */
+    public function test_document_level_discount_validates(): void
+    {
+        $result = $this->validate($this->signed('standard', 'invoice', [], null, [
+            'discount_amount' => '100.00',
+        ]));
+
+        $this->assertSame(
+            [],
+            $this->businessRules($result['errors']),
+            'ZATCA rejected an invoice carrying a document-level discount.'
+        );
+
+        $this->assertSame([], $result['warnings'], 'an advisory fired on a discounted invoice.');
+    }
+
+    /**
+     * A standard-rated and a zero-rated line on one invoice, with a discount
+     * across both.
+     *
+     * This is the only shape that exercises apportionAllowance() for what it
+     * was written to do. With a single category the split is the whole
+     * discount and any arithmetic passes; with two it has to reduce each
+     * category's base in proportion and then recompute the tax on what is
+     * left — including the zero-rated half, where the correct answer is still
+     * zero. Every other case here would look identical if that function
+     * returned nonsense.
+     */
+    public function test_mixed_categories_with_a_discount_validate(): void
+    {
+        $result = $this->validate($this->mixed(discount: 200.0));
+
+        $this->assertSame(
+            [],
+            $this->businessRules($result['errors']),
+            'ZATCA rejected an invoice mixing tax categories under a discount.'
+        );
+
+        $this->assertSame([], $result['warnings'], 'an advisory fired on a mixed-category invoice.');
+    }
+
+    #[DataProvider('taxCategories')]
+    public function test_untaxed_lines_validate(string $category, string $code, float $rate): void
+    {
+        $result = $this->validate($this->signed('standard', 'invoice', [], [
+            'category' => $category,
+            'code' => $code,
+            'rate' => $rate,
+        ]));
+
+        $this->assertSame(
+            [],
+            $this->businessRules($result['errors']),
+            "ZATCA rejected a {$category} line."
+        );
+
+        $this->assertSame([], $result['warnings'], "an advisory fired on a {$category} line.");
+    }
+
+    /**
+     * BT-3's five sub-type bits, and the flag string ZATCA's own samples carry.
+     *
+     * The platform models all five. Nothing had ever checked the bit positions
+     * against the authority, and FatooraConfig once declared a second set of
+     * constants that disagreed with the builder — third party as 0100001
+     * against the 0110000 it actually emits. Those constants were removed as
+     * dead; these samples say the builder was the one that had it right.
+     *
+     * @return iterable<string, array{string, array<string, bool>, string}>
+     */
+    public static function subtypes(): iterable
+    {
+        yield 'plain standard' => ['standard', [], '0100000'];
+        yield 'third party' => ['standard', ['is_third_party' => true], '0110000'];
+        yield 'nominal' => ['simplified', ['is_nominal' => true], '0201000'];
+        yield 'export' => ['standard', ['is_export' => true], '0100100'];
+        yield 'summary' => ['standard', ['is_summary' => true], '0100010'];
+        yield 'self billed' => ['standard', ['is_self_billed' => true], '0100001'];
+    }
+
+    /**
+     * @param  array<string, bool>  $flags
+     */
+    #[DataProvider('subtypes')]
+    public function test_subtype_flags_match_the_authority(string $type, array $flags, string $expected): void
+    {
+        $xml = $this->signed($type, 'invoice', $flags);
+
+        $this->assertStringContainsString(
+            '<cbc:InvoiceTypeCode name="'.$expected.'">',
+            $xml,
+            "BT-3 does not carry {$expected}, which is what ZATCA's sample for this shape does."
+        );
+
+        $result = $this->validate($xml);
+
+        $this->assertSame([], $this->businessRules($result['errors']), 'ZATCA rejected the document.');
+        $this->assertSame([], $result['warnings'], 'an advisory fired.');
+    }
+
+    /**
      * The rule violations a document can fix, separated from the ones only a
      * real CSID can.
      *
@@ -217,15 +404,101 @@ class ZatcaConformanceTest extends TestCase
         );
     }
 
-    private function signed(string $type, string $document = 'invoice'): string
+    /**
+     * One invoice carrying a standard-rated line and a zero-rated one.
+     */
+    private function mixed(float $discount): string
     {
-        $isNote = $document !== 'invoice';
+        $standardNet = 1000.0;
+        $zeroNet = 500.0;
+
+        // The discount reduces each category's base in proportion, so the tax
+        // is what is left of the standard half after its share comes off.
+        $standardShare = round($discount * $standardNet / ($standardNet + $zeroNet), 2);
+        $vat = round(($standardNet - $standardShare) * 0.15, 2);
 
         $invoice = Invoice::withoutTenantScope(fn () => Invoice::create([
             'org_id' => $this->organization->id,
-            'invoice_number' => strtoupper($type.'-'.$document).'-1',
+            'invoice_number' => 'MIXED-1',
+            'type' => 'standard',
+            'document_type' => 'invoice',
+            'status' => 'draft',
+            'issue_date' => now()->toDateString(),
+            'supply_date' => now()->toDateString(),
+            'currency' => 'SAR',
+            'buyer_name' => 'Beta Industries',
+            'buyer_vat_number' => '399999999800003',
+            'buyer_address' => [
+                'street' => 'Olaya Street',
+                'building_number' => '4321',
+                'district' => 'Al Murooj',
+                'city' => 'Riyadh',
+                'postal_code' => '11564',
+                'country_code' => 'SA',
+            ],
+            'discount_amount' => number_format($discount, 2, '.', ''),
+            'subtotal' => number_format($standardNet + $zeroNet, 2, '.', ''),
+            'tax_amount' => number_format($vat, 2, '.', ''),
+            'total' => number_format($standardNet + $zeroNet - $discount + $vat, 2, '.', ''),
+        ]));
+
+        $invoice->lines()->create([
+            'description' => 'Consulting',
+            'quantity' => '1.000',
+            'unit_price' => number_format($standardNet, 2, '.', ''),
+            'tax_rate' => '15.00',
+            'tax_category' => 'S',
+            'tax_amount' => number_format(round($standardNet * 0.15, 2), 2, '.', ''),
+            'line_total' => number_format($standardNet * 1.15, 2, '.', ''),
+        ]);
+
+        $invoice->lines()->create([
+            'description' => 'Exported goods',
+            'quantity' => '1.000',
+            'unit_price' => number_format($zeroNet, 2, '.', ''),
+            'tax_rate' => '0.00',
+            'tax_category' => 'Z',
+            'exempt_code' => 'VATEX-SA-34-3',
+            'exempt_reason' => 'Exported goods',
+            'tax_amount' => '0.00',
+            'line_total' => number_format($zeroNet, 2, '.', ''),
+        ]);
+
+        $result = app(Submitter::class)->generate($invoice->fresh(['lines']), $this->organization);
+
+        $this->assertNotEmpty($result['signed_xml'], 'the invoice was not signed');
+
+        return $result['signed_xml'];
+    }
+
+    /**
+     * @param  array<string, bool>  $subtype  BT-3 sub-type flags
+     * @param  array{category: string, code: string, rate: float}|null  $tax
+     */
+    private function signed(
+        string $type,
+        string $document = 'invoice',
+        array $subtype = [],
+        ?array $tax = null,
+        array $overrides = [],
+    ): string {
+        $isNote = $document !== 'invoice';
+
+        $rate = $tax['rate'] ?? 15.0;
+        $net = 1000.0;
+        $discount = (float) ($overrides['discount_amount'] ?? 0);
+        $vat = round(($net - $discount) * $rate / 100, 2);
+
+        $invoice = Invoice::withoutTenantScope(fn () => Invoice::create([
+            'org_id' => $this->organization->id,
+            'invoice_number' => strtoupper($type.'-'.$document).'-'.substr(md5(serialize($subtype)), 0, 6),
             'type' => $type,
             'document_type' => $document,
+            'is_third_party' => $subtype['is_third_party'] ?? false,
+            'is_nominal' => $subtype['is_nominal'] ?? false,
+            'is_export' => $subtype['is_export'] ?? false,
+            'is_summary' => $subtype['is_summary'] ?? false,
+            'is_self_billed' => $subtype['is_self_billed'] ?? false,
             // A credit or debit note corrects an earlier invoice, and BR-KSA-56
             // wants to know which one.
             'billing_ref' => $isNote ? 'INV-ORIGINAL-1' : null,
@@ -235,7 +508,13 @@ class ZatcaConformanceTest extends TestCase
             'supply_date' => now()->toDateString(),
             'currency' => 'SAR',
             'buyer_name' => 'Beta Industries',
-            'buyer_vat_number' => $type === 'standard' ? '399999999800003' : null,
+            // A buyer identified by a national ID has no VAT number — BT-46 is
+            // the alternative to BT-48, not a companion to it.
+            'buyer_vat_number' => isset($tax['buyer_id']) || $type !== 'standard'
+                ? null
+                : '399999999800003',
+            'buyer_id' => $tax['buyer_id'] ?? null,
+            'buyer_id_scheme' => $tax['buyer_id_scheme'] ?? null,
             // BR-KSA-10 and the BR-KSA-F-06 family read the buyer address.
             // A standard invoice without one still validates, and reports an
             // advisory per missing field — which is noise this test would
@@ -248,19 +527,23 @@ class ZatcaConformanceTest extends TestCase
                 'postal_code' => '11564',
                 'country_code' => 'SA',
             ] : null,
-            'subtotal' => '1000.00',
-            'tax_amount' => '150.00',
-            'total' => '1150.00',
+            'subtotal' => number_format($net, 2, '.', ''),
+            'tax_amount' => number_format($vat, 2, '.', ''),
+            'total' => number_format($net - $discount + $vat, 2, '.', ''),
+            ...$overrides,
         ]));
 
         $invoice->lines()->create([
             'description' => 'Consulting',
             'quantity' => '1.000',
-            'unit_price' => '1000.00',
-            'tax_rate' => '15.00',
-            'tax_category' => 'S',
-            'tax_amount' => '150.00',
-            'line_total' => '1150.00',
+            'unit_price' => number_format($net, 2, '.', ''),
+            'tax_rate' => number_format($rate, 2, '.', ''),
+            'tax_category' => $tax['category'] ?? 'S',
+            'exempt_code' => $tax['code'] ?? null,
+            // BR-KSA-49 wants the reason in words beside the code.
+            'exempt_reason' => isset($tax['code']) ? 'Exempt under the cited article' : null,
+            'tax_amount' => number_format($vat, 2, '.', ''),
+            'line_total' => number_format($net + $vat, 2, '.', ''),
         ]);
 
         $result = app(Submitter::class)->generate($invoice->fresh(['lines']), $this->organization);

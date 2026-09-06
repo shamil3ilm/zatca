@@ -28,6 +28,14 @@ return new class extends Migration
             $table->decimal('exchange_rate', 16, 6)->nullable();
             $table->string('buyer_name', 255);
             $table->string('buyer_vat_number', 255)->nullable();
+            // BT-46 and BT-46-1: who the buyer is when they have no VAT
+            // number, and which register the identifier comes from.
+            // BR-KSA-49 makes a national ID mandatory on a healthcare or
+            // education supply billed to a citizen, so without these two
+            // columns the most common zero-rated supplies in the Kingdom
+            // could not be filed at all.
+            $table->string('buyer_id', 50)->nullable();
+            $table->string('buyer_id_scheme', 10)->nullable();
             $table->text('buyer_address')->nullable();
             $table->string('payment_means_code', 10)->nullable();
             $table->string('billing_ref', 255)->nullable();

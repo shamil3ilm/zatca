@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Compliance;
 
+use App\Domains\Invoice\Http\Requests\CreateInvoiceRequest;
 use Illuminate\Support\Facades\File;
 use Tests\TestCase;
 
@@ -84,6 +85,41 @@ class XmlProfileTest extends TestCase
                 "The {$type} CustomizationID changed."
             );
         }
+    }
+
+    /**
+     * BT-121, pinned to what ZATCA's BR-KSA-CL-04 assertion accepts.
+     *
+     * The allowlist had drifted both ways: three codes the authority does not
+     * recognise, and two valid ones it refused. A code list is exactly the
+     * kind of thing that is copied from prose once and never checked against
+     * the rule file that decides.
+     */
+    public function test_exemption_codes_match_the_authority(): void
+    {
+        $codes = (new \ReflectionClass(CreateInvoiceRequest::class))
+            ->getConstant('VALID_EXEMPTION_CODES');
+
+        sort($codes);
+
+        $this->assertSame([
+            'VATEX-SA-29',
+            'VATEX-SA-29-7',
+            'VATEX-SA-30',
+            'VATEX-SA-32',
+            'VATEX-SA-33',
+            'VATEX-SA-34-1',
+            'VATEX-SA-34-2',
+            'VATEX-SA-34-3',
+            'VATEX-SA-34-4',
+            'VATEX-SA-34-5',
+            'VATEX-SA-35',
+            'VATEX-SA-36',
+            'VATEX-SA-EDU',
+            'VATEX-SA-HEA',
+            'VATEX-SA-MLTRY',
+            'VATEX-SA-OOS',
+        ], $codes, 'The exemption allowlist no longer matches BR-KSA-CL-04.');
     }
 
     public function test_ubl_version_is_pinned(): void

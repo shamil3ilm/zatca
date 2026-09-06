@@ -26,6 +26,7 @@ declare(strict_types=1);
 
 use App\Domains\Auth\Models\User;
 use App\Domains\Compliance\Fatoora\Services\DocumentBuilder;
+use App\Domains\Compliance\Fatoora\Services\Submitter;
 use App\Domains\Invoice\Models\Invoice;
 use App\Domains\Licensing\Models\License;
 use App\Domains\Organization\Models\Organization;
@@ -210,11 +211,16 @@ check('a wrong secret is refused',
 echo "\n=== tenant isolation ===\n";
 foreach ([[$acme, 'ACME'], [$rival, 'RIVAL']] as [$org, $prefix]) {
     for ($i = 1; $i <= 2; $i++) {
-        Invoice::withoutTenantScope(fn () => Invoice::create([
+        $draft = Invoice::withoutTenantScope(fn () => Invoice::create([
             'org_id' => $org->id, 'invoice_number' => "$prefix-$i", 'type' => 'standard',
             'status' => 'draft', 'issue_date' => now()->toDateString(), 'currency' => 'SAR',
             'buyer_name' => 'Buyer', 'subtotal' => '100.00', 'tax_amount' => '15.00', 'total' => '115.00',
         ]));
+
+        // The counter is allocated at issuance, not on save — a draft carries
+        // no ICV, because a document that may never be issued must not consume
+        // a number in the chain. So the checks below have to issue.
+        Invoice::withoutTenantScope(fn () => app(Submitter::class)->generate($draft, $org));
     }
 }
 check('four invoices persisted', Invoice::withoutTenantScope(fn () => Invoice::count()) === 4);
@@ -275,7 +281,14 @@ try {
 
     // The PIH chain, end to end. Persisting the hash is what puts this invoice
     // into the chain; the next one must carry it.
-    $b2c->forceFill(['hash' => $first['hash']])->save();
+    // Numbered as well as hashed. The predecessor lookup orders by ICV, so a
+    // document with a hash and no number is not in the chain at all — and the
+    // tenant already has issued invoices above, whose numbers this has to sit
+    // after to be the one $next chains to.
+    $b2c->forceFill([
+        'hash' => $first['hash'],
+        'icv' => Invoice::generateNextIcv((string) $acme->id),
+    ])->save();
 
     $next = Invoice::withoutTenantScope(fn () => Invoice::create([
         'org_id' => $acme->id, 'invoice_number' => 'ACME-B2C-2', 'type' => 'simplified',
@@ -283,6 +296,13 @@ try {
         'buyer_name' => 'Walk-in', 'subtotal' => '100.00', 'tax_amount' => '15.00', 'total' => '115.00',
     ]));
     $next->load('lines');
+
+    // The predecessor is found by ICV — "the highest-numbered hashed document
+    // below mine" — so the question only has an answer once this document has
+    // a number of its own. Issuance allocates it, and Submitter::generate()
+    // allocates before it reads the chain for exactly this reason. Asking an
+    // unnumbered draft returns null, which is a state production never reaches.
+    $next->icv = Invoice::generateNextIcv((string) $acme->id);
 
     check('next invoice chains to the previous',
         $next->previous_invoice_hash === $first['hash'],
