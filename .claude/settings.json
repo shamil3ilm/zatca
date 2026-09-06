@@ -48,7 +48,9 @@
       "Bash(npm outdated *)",
       "Bash(php artisan route:list *)",
       "Bash(php artisan about *)",
-      "Bash(python -)"
+      "Bash(python -)",
+      "Bash(composer update)",
+      "Bash(composer update *)"
     ],
     "deny": [
       "Bash(rm -r*)",
@@ -75,7 +77,6 @@
       "Bash(php artisan cache:*)",
       "Bash(php artisan queue:*)",
       "Bash(composer install *)",
-      "Bash(composer update *)",
       "Bash(composer require *)",
       "Bash(npx *)",
       "Bash(mysql *)",
