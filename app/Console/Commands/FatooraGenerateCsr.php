@@ -39,7 +39,34 @@ class FatooraGenerateCsr extends Command
 
     protected $description = 'Generate ZATCA-compliant CSR and private key using PHP OpenSSL';
 
-    private const SDK_PATH = 'C:/Users/Shamil/Downloads/zatca-einvoicing-sdk-Java-238-R3.4.8/zatca-einvoicing-sdk-Java-238-R3.4.8/Apps';
+    /**
+     * Where ZATCA's Java SDK is unpacked, if it is.
+     *
+     * This was one developer's Downloads folder, hardcoded — so on any other
+     * machine, and on that one after the folder moved, file_exists() on the jar
+     * returned false and CSR generation fell through to phpseclib without
+     * saying why. The SDK is a licensed download that cannot live in the
+     * repository, so it is named by environment or not at all.
+     *
+     * Set ZATCA_SDK_PATH to the directory holding Apps/ and Data/. The same
+     * variable drives the conformance tests in tests/Fixtures/ZatcaSdk.php.
+     */
+    private function sdkRoot(): ?string
+    {
+        $path = getenv('ZATCA_SDK_PATH') ?: null;
+
+        return $path === null ? null : rtrim(str_replace('\\', '/', $path), '/');
+    }
+
+    /**
+     * The SDK's executables, which is where the jar and fatoora.bat live.
+     */
+    private function sdkApps(): ?string
+    {
+        $root = $this->sdkRoot();
+
+        return $root === null ? null : $root.'/Apps';
+    }
 
     public function handle(): int
     {
@@ -91,13 +118,17 @@ class FatooraGenerateCsr extends Command
 
         try {
             // Check if ZATCA SDK is available
-            $sdkJar = self::SDK_PATH.'/zatca-einvoicing-sdk-238-R3.4.8.jar';
-            if (file_exists($sdkJar)) {
+            $apps = $this->sdkApps();
+            $sdkJar = $apps === null ? null : $apps.'/zatca-einvoicing-sdk-238-R3.4.8.jar';
+
+            if ($sdkJar !== null && file_exists($sdkJar)) {
                 $this->info('Using ZATCA SDK for CSR generation (recommended)...');
                 $result = $this->generateCsrWithSdk($csrData);
             } else {
                 $this->warn('ZATCA SDK not found, falling back to phpseclib...');
-                $this->line('For best results, install ZATCA SDK at: '.self::SDK_PATH);
+                $this->line($apps === null
+                    ? 'Set ZATCA_SDK_PATH to the unpacked SDK to use it instead.'
+                    : "No SDK jar under {$apps}.");
                 $result = $this->generateCsrWithPhpseclib($csrData);
             }
 
@@ -188,8 +219,8 @@ EOT;
         $this->info('Created CSR config: '.$configPath);
 
         // Set up SDK environment
-        $sdkConfigPath = dirname(self::SDK_PATH).'/Configuration/config.json';
-        $sdkJar = self::SDK_PATH.'/zatca-einvoicing-sdk-238-R3.4.8.jar';
+        $sdkConfigPath = $this->sdkRoot().'/Configuration/config.json';
+        $sdkJar = $this->sdkApps().'/zatca-einvoicing-sdk-238-R3.4.8.jar';
 
         // Ensure SDK config exists
         if (! file_exists($sdkConfigPath)) {
@@ -258,7 +289,12 @@ EOT;
      */
     private function createSdkConfig(string $configPath): void
     {
-        $sdkRoot = dirname(dirname(self::SDK_PATH));
+        // One dirname, not two. Data/ sits beside Apps/ inside the SDK root,
+        // so climbing twice landed on the wrapper directory above it and every
+        // path written here pointed at a Data/ that does not exist — which the
+        // SDK reports as a NullPointerException about resource paths, not as a
+        // missing file.
+        $sdkRoot = $this->sdkRoot();
         $config = [
             'xsdPath' => $sdkRoot.'/Data/Schemas/xsds/UBL2.1/xsd/maindoc/UBL-Invoice-2.1.xsd',
             'enSchematron' => $sdkRoot.'/Data/Rules/schematrons/CEN-EN16931-UBL.xsl',
