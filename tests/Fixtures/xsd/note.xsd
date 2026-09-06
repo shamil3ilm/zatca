@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A deliberately tiny schema. This exercises the schema-validation path in
+  InvoiceValidator without needing ZATCA's UBL set, which is a licensed
+  download and cannot live in the repository. When that schema is installed,
+  only the configured path changes; the mechanism these tests cover is the same.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="note">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="to" type="xs:string"/>
+        <xs:element name="body" type="xs:string"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>

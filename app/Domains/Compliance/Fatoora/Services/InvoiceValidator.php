@@ -516,17 +516,85 @@ class InvoiceValidator
     }
 
     /**
-     * Validate invoice XML against ZATCA XSD schema.
-     * Returns array of validation errors.
+     * Check invoice XML: well-formed always, against the UBL schema when it is
+     * present.
+     *
+     * The schema is not in the repository. ZATCA publishes the UBL 2.1 schema
+     * set with its SDK, which is a licensed download, so this reads a path from
+     * config and validates only if something is there.
+     *
+     * Until it is, this establishes that the document parses and nothing more.
+     * That distinction matters enough to return rather than leave implied:
+     * every caller can see which of the two checks it got, instead of reading
+     * an empty error list as a document that satisfies the specification.
+     *
+     * @return array{schema_checked: bool, errors: list<string>}
      */
     public function validateXml(string $xml): array
     {
-        // For full validation, would load ZATCA XSD schema
-        // $schemaPath = base_path('resources/zatca/Invoice.xsd');
-        // $dom->schemaValidate($schemaPath);
-        return array_map(
+        $dom = new \DOMDocument;
+
+        $errors = array_map(
             static fn (string $error): string => "XML Error {$error}",
-            Xml::errors(new \DOMDocument, $xml)
+            Xml::errors($dom, $xml)
         );
+
+        if ($errors !== []) {
+            return ['schema_checked' => false, 'errors' => $errors];
+        }
+
+        $schema = $this->schemaPath();
+
+        if ($schema === null) {
+            return ['schema_checked' => false, 'errors' => []];
+        }
+
+        return ['schema_checked' => true, 'errors' => $this->schemaErrors($dom, $schema)];
+    }
+
+    /**
+     * The UBL schema to validate against, or null when none is installed.
+     */
+    private function schemaPath(): ?string
+    {
+        $path = config('fatoora.validation.schema_path');
+
+        if (! is_string($path) || $path === '') {
+            return null;
+        }
+
+        $path = str_starts_with($path, '/') || preg_match('/^[A-Za-z]:/', $path) === 1
+            ? $path
+            : base_path($path);
+
+        return is_file($path) ? $path : null;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function schemaErrors(\DOMDocument $dom, string $schema): array
+    {
+        $previous = libxml_use_internal_errors(true);
+        libxml_clear_errors();
+
+        // Load by path, not by string: UBL's main document imports the common
+        // component schemas beside it, and libxml resolves those relative to
+        // the file it was given.
+        $dom->schemaValidate($schema);
+
+        $errors = array_map(
+            static fn (\LibXMLError $e): string => sprintf(
+                'Schema line %d: %s',
+                $e->line,
+                trim($e->message)
+            ),
+            libxml_get_errors()
+        );
+
+        libxml_clear_errors();
+        libxml_use_internal_errors($previous);
+
+        return $errors;
     }
 }
